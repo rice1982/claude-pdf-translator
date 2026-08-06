@@ -1,0 +1,11 @@
+# 仮想環境を除外
+venv/
+.venv/
+.env
+
+# 出力成果物を除外
+output/
+
+# Pythonのキャッシュを除外
+__pycache__/
+*.pyc
