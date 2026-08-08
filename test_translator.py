@@ -32,11 +32,6 @@ TABLE_FIG_ID_RE = re.compile(r"^!\[P(\d+)-TABLE(\d+)\]\(images/(table_p\d+_\d+\.
 TABLE_CAPTION_ID_RE = re.compile(r"^\[P(\d+)-TABLE(\d+)-CAPTION-S(\d+)\] (.+)$")
 
 
-def test_sample_pdf_exists():
-    """テスト用サンプルPDFが存在するかチェック"""
-    assert SAMPLE_PDF_PATH.exists(), "input/sample0.pdf が見つかりません。ファイルを配置してください。"
-
-
 @pytest.fixture(scope="module")
 def processed(tmp_path_factory):
     """sample.pdf を一度だけMinerUで処理し、結果を全テストで共有する
@@ -478,6 +473,52 @@ def test_unnumbered_headings_get_synthetic_section_ids():
     assert text_blocks[1].sentence_ids[0].endswith("-u2.language-S1")
 
 
+def test_unnumbered_headings_in_real_book_pdf(tmp_path):
+    """test_unnumbered_headings_get_synthetic_section_idsが自作データで
+    検証している合成章ID（"u1","u2",...）のロジックを、実際のsample3.pdf
+    （印刷ページラベル55〜60、物理ページ67〜72）を処理して裏取りする。
+
+    このページ範囲には、番号の付いていない見出し（例: "Fundamentals of
+    Probability Theory"）と、番号付きの見出し（例: "1. Sampling-based
+    methods:"）の両方が実際に含まれており、前者が合成ID・後者が通常の
+    章番号として正しく処理されることを、process_pdfの実出力で確認する。
+    CLAUDE.mdの運用規定に従い、sample3.pdfは印刷ページラベルで絞り込んだ
+    最小限の範囲（6ページ分）のみを処理対象とする。
+    """
+    if not SAMPLE3_PDF_PATH.exists():
+        pytest.skip("sample3.pdf がないためスキップ")
+
+    start_page, end_page = resolve_physical_page_range(SAMPLE3_PDF_PATH, "55", "60")
+    assert (start_page, end_page) == (67, 72)
+
+    output_dir = tmp_path / "sample3_labels_recheck"
+    md_paths = process_pdf(SAMPLE3_PDF_PATH, output_dir, start_page=start_page, end_page=end_page)
+    texts = {p.name: p.read_text(encoding="utf-8") for p in md_paths}
+
+    # MinerUはOCR結果の単語間にノーブレークスペース(\xa0)を挟むことがある
+    # ため、この後付け見出しID検証の本質とは無関係な差異として正規化する。
+    heading_lines = sorted(
+        line.replace("\xa0", " ")
+        for text in texts.values()
+        for line in text.splitlines()
+        if "-HEADING-" in line
+    )
+
+    expected_unnumbered = [
+        '[P67-HEADING-u1.probabilistic] Probabilistic Generative Models: Foundational Theory for Cognitive Modeling Based on Bayesian Inference',
+        '[P67-HEADING-u2.probabilistic] Probabilistic Generative Models and Bayesian Inference in Cognitive Modeling',
+        '[P68-HEADING-u3.fundamentals] Fundamentals of Probability Theory',
+        '[P69-HEADING-u4.bayesian] Bayesian Inference (Bayesian Estimation)',
+        '[P70-HEADING-u5.graphical] Graphical Model Representation for PGMS',
+        '[P71-HEADING-u6.cross] Cross-Modal Inference and Deep PGMs',
+    ]
+    expected_numbered = [
+        '[P69-HEADING-1.sampling] 1. Sampling-based methods:',
+        '[P70-HEADING-2.approximate] 2. Approximate inference methods:',
+    ]
+    assert heading_lines == sorted(expected_unnumbered + expected_numbered)
+
+
 def test_translate_and_export_with_mocked_deepl(processed, monkeypatch):
     """CLAUDE.mdの規定により、pytestでの翻訳テストはDeepLの有料APIキーを
     消費しないよう、DeepL呼び出し自体をモックする
@@ -515,6 +556,91 @@ def test_translate_and_export_with_mocked_deepl(processed, monkeypatch):
     assert has_japanese, "paper_ja.pdfに日本語文字が見つからない（翻訳が行われていない可能性がある）"
 
 
+def test_translate_and_export_translates_all_translatable_units(tmp_path, monkeypatch):
+    """test_translate_and_export_with_mocked_deeplは「日本語が1文字でも
+    あればPASS」という緩い検証のため、翻訳対象文の一部しか訳されていない
+    （例: 5文中1文しか訳されていない）不具合を検知できない。この弱点を
+    補強するため、翻訳対象の文数が既知（5文: title 1 + heading 1 +
+    body_sentence 3）の自作Markdownを用意し、モック訳文字列が出力PDFに
+    ちょうどその数だけ出現することを確認する。process_pdf/MinerUを
+    一切経由しないため、数秒で完了する。
+    """
+    output_dir = tmp_path / "g_all_units_input"
+    output_dir.mkdir()
+    mock_ja = "これはテスト用の日本語訳です。"
+    (output_dir / "page_01_en.md").write_text(
+        "[P1-TITLE] A Study of Something Interesting\n"
+        "[P1-AUTHORS] Jane Doe\n"
+        "[P1-HEADING-1.introduction] 1. INTRODUCTION\n"
+        "[P1-S1-1.introduction-S1] This is the first sentence.\n"
+        "[P1-S2-1.introduction-S2] This is the second sentence.\n"
+        "[P1-S3-1.introduction-S3] This is the third sentence.\n",
+        encoding="utf-8",
+    )
+
+    def _fake_translate_with_deepl(units, api_key, document_context, log=print):
+        for unit in units:
+            if unit.translatable:
+                unit.ja_text = mock_ja
+
+    monkeypatch.setattr(translate_paper, "translate_with_deepl", _fake_translate_with_deepl)
+
+    pdf_paths = translate_and_export(output_dir)
+    ja_pdf_path = next(p for p in pdf_paths if p.name == "paper_ja.pdf")
+    with fitz.open(ja_pdf_path) as doc:
+        ja_text = "".join(page.get_text() for page in doc)
+
+    translated_count = ja_text.count(mock_ja)
+    assert translated_count == 5, (
+        f"翻訳対象の5文（title/heading/body_sentence x3）すべてに訳文が"
+        f"反映されているはずが、{translated_count}回しか出現しなかった"
+        f"（一部の文が未翻訳のまま残っている可能性がある）"
+    )
+
+
+def test_translate_and_export_excludes_references_section(tmp_path, monkeypatch):
+    """md_tag_parser.exclude_references_sectionの動作を、Gのスイート内で
+    直接検証する。sample0.pdf（2ページの論文抜粋）には参考文献セクション
+    が含まれないため、既存のtest_translate_and_export_with_mocked_deepl
+    ではこの分岐が実質検証されていなかった。参考文献セクション（見出し・
+    本文とも）は翻訳対象から除外され、原文の英語のまま出力されるはず
+    である。process_pdf/MinerUを一切経由しない。
+    """
+    output_dir = tmp_path / "g_references_input"
+    output_dir.mkdir()
+    mock_ja = "これはテスト用の日本語訳です。"
+    reference_text = "Smith J. A landmark paper on foo. Journal of Bar, 2020."
+    (output_dir / "page_01_en.md").write_text(
+        "[P1-TITLE] A Study of Something Interesting\n"
+        "[P1-HEADING-1.introduction] 1. INTRODUCTION\n"
+        "[P1-S1-1.introduction-S1] This sentence should be translated.\n"
+        "[P1-HEADING-2.references] REFERENCES\n"
+        f"[P1-S2-2.references-S1] {reference_text}\n",
+        encoding="utf-8",
+    )
+
+    def _fake_translate_with_deepl(units, api_key, document_context, log=print):
+        for unit in units:
+            if unit.translatable:
+                unit.ja_text = mock_ja
+
+    monkeypatch.setattr(translate_paper, "translate_with_deepl", _fake_translate_with_deepl)
+
+    pdf_paths = translate_and_export(output_dir)
+    ja_pdf_path = next(p for p in pdf_paths if p.name == "paper_ja.pdf")
+    with fitz.open(ja_pdf_path) as doc:
+        ja_text = "".join(page.get_text() for page in doc)
+
+    assert mock_ja in ja_text, "本文（翻訳対象）に訳文が反映されていない"
+    assert reference_text in ja_text, (
+        "参考文献セクションが翻訳対象から除外されておらず、"
+        "原文の英語がそのまま残っていない"
+    )
+    assert "REFERENCES" in ja_text, (
+        "参考文献セクションの見出し自体も翻訳対象から除外されているはず"
+    )
+
+
 @pytest.mark.parametrize(
     "label,expected_physical_page",
     [
@@ -523,8 +649,8 @@ def test_translate_and_export_with_mocked_deepl(processed, monkeypatch):
         ("Cover", 1),
         ("i", 2),
         ("xviii", 16),
-        ("36", 49),   # 本文開始後の算用数字ページ（Part II開始直前）
-        ("37", 50),
+        ("55", 67),   # 本文開始後の算用数字ページ（ラベル55-60範囲の開始）
+        ("60", 72),   # 同、ラベル55-60範囲の終了
     ],
 )
 def test_resolve_physical_page_for_sample3(label, expected_physical_page):
@@ -558,11 +684,25 @@ def test_resolve_page_range_conflicting_start_and_start_label_raises():
     """--startと--start-labelを同時に指定するのは矛盾した指定であり、
     どちらを優先すべきか一意に決まらないためエラーとする。"""
     with pytest.raises(ValueError):
-        resolve_page_range(SAMPLE3_PDF_PATH, None, 49, None, "36", None)
+        resolve_page_range(SAMPLE3_PDF_PATH, None, 67, None, "55", None)
 
 
 def test_resolve_page_range_prefers_page_label_over_chapter():
     """--start-label/--end-labelが指定された場合、--chapterより優先される
     （--start/--endが優先されるのと同じ優先順位）。"""
-    start_page, end_page = resolve_page_range(SAMPLE3_PDF_PATH, "1", None, None, "36", "41")
-    assert (start_page, end_page) == (49, 53)
+    start_page, end_page = resolve_page_range(SAMPLE3_PDF_PATH, "1", None, None, "55", "60")
+    assert (start_page, end_page) == (67, 72)
+
+
+def test_require_pdf_exists_raises_for_missing_file():
+    """存在しない入力PDFパスを指定した場合、fitzの生の例外
+    （FileNotFoundError）ではなく、分かりやすいSystemExitで終了すること
+    を確認する。"""
+    with pytest.raises(SystemExit, match="入力PDFファイルが見つかりません"):
+        translate_paper._require_pdf_exists("input/does_not_exist.pdf")
+
+
+def test_require_pdf_exists_passes_for_existing_file():
+    """実在するPDFパスを指定した場合は何も送出しないこと（正常系）を
+    確認する。"""
+    translate_paper._require_pdf_exists(SAMPLE_PDF_PATH)

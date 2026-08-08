@@ -1,0 +1,538 @@
+======================================================================
+ テストコード（test_translator.py）の説明
+ テストスイート一覧・各スイートが調べていること・
+ explain.txt のどの関数をテストしているか
+======================================================================
+
+前提: このファイルは explain.txt（プログラム全体構成の説明）とセットで
+読む前提で書かれている。各テストスイートの説明末尾に記載した
+「テスト対象（explain.txtの該当関数）」は、すべて explain.txt 内に
+説明のある関数・エイリアスである（explain.txt 側もこのファイルに登場
+する関数をすべて含むよう更新済み）。
+
+全体構成: test_translator.py は1ファイルに38個の test_ 関数（うち5個は
+@pytest.mark.parametrize により複数ケースを1関数で検証）を持つ。
+実行手段は `pytest` のみで、CLAUDE.md の運用規定により DeepL の実課金
+呼び出しはモック化されている（テストスイートG参照）。全体を9個の
+テストスイートに分類できる。
+
+補足: かつて存在した「入力サンプル存在確認スイート」
+（`test_sample_pdf_exists`: `input/sample0.pdf`の存在をassertするだけの
+テスト）は、2026-08-09に削除した。`_require_pdf_exists`（スイートJ）の
+`test_require_pdf_exists_passes_for_existing_file`が、実体として同じ
+sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在すること）」を
+検証しており、ファイルが無くなった場合はこのテストも（`pytest.raises`
+で囲んでいないため）明確にFailする。つまりAが担っていた「黙って
+skipせず明確にFailで知らせる」という役割は既にJに包含されており、
+Aは独自の検証価値を持たなくなっていたため削除した。
+
+
+■ 検証カテゴリについて（期待値の信頼性の指標）
+
+各スイート（テストによって性質が割れる場合はテスト単位）に
+「検証カテゴリ」を付記する。これは「このテストが本当にPASSし続けて
+いれば安心してよいか、それとも別途人間の目でも確認すべきか」を示す
+指標であり、テストの重要度そのものを表すものではない。3種類に分類
+する。3種類のうち2つは「要人間検証」だが、その**理由が異なる**点に
+注意（正確性の問題か、十分性の問題か）。
+
+  ◆仕様完結型（検証不要）
+    入力・期待値ともにテスト自身が定義した自作データ（またはPDFの
+    中身を一切見ない機械的な判定）であり、コード（正規表現・
+    アルゴリズム）を読めば期待値の正しさが自明に判定できる。外部の
+    PDF・OCR結果を信用する必要が無い。
+
+  ◆実データ・要人間検証（正確性のリスク）
+    期待値が、実在のサンプルPDFをMinerU（OCR・レイアウト解析）
+    または fitz（TOC/印刷ページラベルのメタデータ読み取り＋そこ
+    からの計算）に通した結果をそのままハードコードしたもの。
+    メタデータの読み取り自体（fitz経由）は正確だが、「そこから
+    導いた期待値が本当に正しいか（人間が実際にPDFを見て確認した
+    か）」はテストコードだけからは保証されない。特にMinerUのOCR結果
+    をそのまま期待値にしている場合、誤読があっても「誤りが正解として
+    固定化」されるリスクがある。将来ツールの挙動が変わった場合も、
+    テストは「壊れていないこと」ではなく「昔の挙動と一致すること」
+    しか検知できない。
+
+  ◆機械的チェック・要人間検証（十分性のリスク）
+    実データの内容そのものは信用していない（ファイルの存在・非空・
+    テスト自身が注入した既知の文字列の有無など、チェック自体は明確
+    で信頼できる）ものの、その**チェックの範囲が薄く**、たとえこの
+    テストがPASSし続けても「検証したいはずの機能が本当に正しく動いて
+    いる」ことまでは十分に保証できない、というリスクを持つ。例えば
+    「日本語が1文字でもあればPASS」という検証では、翻訳対象50文中
+    49文が未翻訳のまま残っていても検知できない。正確性（ハードコード
+    した値が間違っていないか）ではなく、十分性（そのチェックの粒度で
+    本当に十分か）を人間が判断する必要がある。
+
+
+■ テストスイート一覧（全9スイート／test_関数36個）
+
+----------------------------------------------------------------------
+[B] PDF解析パイプライン基本検証スイート（sample0.pdf／11テスト）
+----------------------------------------------------------------------
+  該当関数: test_extract_and_number_sentences,
+    test_front_matter_labels_are_not_counted_as_sentences,
+    test_chapter_headings_get_dedicated_labels,
+    test_cross_page_paragraph_is_kept_on_starting_page,
+    test_figure_caption_is_separated_from_body_text,
+    test_images_are_extracted_as_png,
+    test_figure_reference_is_placed_in_page2_markdown,
+    test_all_three_equations_are_detected_with_latex,
+    test_inline_math_is_wrapped_in_dollar_signs,
+    test_header_and_footer_noise_excluded,
+    test_sentence_ids_are_sequential_per_page
+
+  共通の仕組み: モジュールスコープの fixture `processed` が
+  input/sample0.pdf を1回だけ処理し、生成された page_01_en.md /
+  page_02_en.md の中身を全テストで使い回す（MinerU推論が数分かかる
+  ため、テストごとに再実行しない）。
+
+  何を調べているか（テストごと）:
+    - test_extract_and_number_sentences: ページ数(2)とファイル名
+      （page_01_en.md/page_02_en.md）、[P1-TITLE][P1-S1-abstract-S1]
+      形式のIDが実際に出力されているか。
+    - test_front_matter_labels_are_not_counted_as_sentences: タイトル・
+      著者・所属が本文の文カウント（S番号）に含まれず、専用ラベル
+      （[P1-TITLE]等）になっているか。
+    - test_chapter_headings_get_dedicated_labels: 章・節見出しが文
+      カウントに含まれず、章番号ベースのラベル（[P1-HEADING-...]）に
+      なっているか。
+    - test_cross_page_paragraph_is_kept_on_starting_page: ページを
+      またぐ段落が、開始ページ側のMarkdownにまとめて収まっているか。
+    - test_figure_caption_is_separated_from_body_text: 図キャプション
+      が本文文カウントと別立てで、文単位に分割・連番されているか。
+    - test_images_are_extracted_as_png: 図・数式領域が正しいPNGとして
+      output/images/ に切り出されているか（マジックバイト・画素数）。
+    - test_figure_reference_is_placed_in_page2_markdown: 画像参照タグ
+      [P2-FIG1] がMarkdown中の正しい位置に埋め込まれているか。
+    - test_all_three_equations_are_detected_with_latex: 数式3つが
+      画像として分離され、対応するLaTeXタグが付与されているか。
+    - test_inline_math_is_wrapped_in_dollar_signs: 文中インライン数式
+      が $...$ で構造化されているか。
+    - test_header_and_footer_noise_excluded: arXiv IDなどヘッダー/
+      フッターのノイズが本文に混入していないか。
+    - test_sentence_ids_are_sequential_per_page: 各ページの文IDが
+      1から欠番なく連番になっているか。
+
+  検証カテゴリ: ◆実データ・要人間検証
+    期待値（見出しの正確な文言、キャプションの3文への分割結果、
+    数式のLaTeX、PNG4件のファイル名等）は、MinerUがsample0.pdfを
+    実際にOCR・レイアウト解析した結果をそのままハードコードした
+    もの。MinerUが誤読していないかを独立に確認した記録は無い。
+
+  テスト対象（explain.txtの該当関数）:
+    - pdf_processor.process_pdf
+        （[2] Step1〜Step4を通しで実行するオーケストレーター関数。
+        このスイートの全テストが `processed` fixture 経由で間接的に
+        検証している）
+    - pdf_mineru_runner.run_mineru（process_pdf のStep1として間接的に
+      exercise される）
+    - pdf_structure_analyzer.analyze_structure（Step2。本文/非翻訳要素
+      の分離・ID付与ロジックの正しさをこのスイートが検証している）
+    - pdf_text_utils.split_sentences / restore_merged_hyphens /
+      parse_caption_label / slugify_section_name / HEADING_RE
+      （analyze_structure内部から呼ばれる文字列処理。文分割・見出し
+      判定・キャプション判定の正しさが本スイートの各テストに現れる）
+    - pdf_document_builder.build_document（Step4。Markdown・画像の
+      最終出力形式をこのスイートが検証している）
+
+
+----------------------------------------------------------------------
+[C] 文字列処理ユーティリティの単体テストスイート（PDF不使用／3テスト・
+    parametrizeにより計11ケース）
+----------------------------------------------------------------------
+  該当関数: test_split_sentences_handles_abbreviations（4ケース）,
+    test_heading_regex_and_slugify（3ケース）,
+    test_parse_caption_label（4ケース）
+
+  何を調べているか:
+    PDF解析を一切実行せず、pdf_text_utils.py の文字列処理関数を直接
+    入力文字列で検証する、最も軽量なユニットテスト群。
+    - test_split_sentences_handles_abbreviations: "Fig." "Sec." "e.g."
+      等の略語直後で誤って文分割しないか。
+    - test_heading_regex_and_slugify: "1. INTRODUCTION" のような見出し
+      文字列から章番号・章名を正しく判定し、スラッグ（introduction等）
+      に変換できるか。
+    - test_parse_caption_label: "Fig. 1:..." "Table 2:..." 等のキャプ
+      ション文から種別（figure/table）と番号を正しく抽出できるか。
+
+  検証カテゴリ: ◆仕様完結型
+    入力・期待値ともに自作の文字列リテラルで、正規表現（HEADING_RE等）
+    を読めば期待値の正しさが自明に判定できる。PDF・MinerUを一切
+    経由しない。
+
+  テスト対象（explain.txtの該当関数）:
+    - pdf_text_utils.split_sentences
+        （pdf_processor.split_sentences というエイリアス経由で呼ばれる。
+        explain.txt [2] Step2の補足「後方互換エイリアス」に対応）
+    - pdf_text_utils.HEADING_RE / slugify_section_name
+        （pdf_processor.HEADING_RE / pdf_processor._slugify_section_name
+        というエイリアス経由で呼ばれる）
+    - pdf_text_utils.parse_caption_label
+        （pdf_processor._parse_caption_label というエイリアス経由で
+        呼ばれる）
+
+
+----------------------------------------------------------------------
+[D] 表（Table）キャプション・表画像抽出スイート（sample1.pdf /
+    sample2.pdf／4テスト）
+----------------------------------------------------------------------
+  該当関数: test_table_captions_sample1, test_table_captions_sample2,
+    test_table_images_are_extracted_as_png_sample1,
+    test_table_images_are_extracted_as_png_sample2
+
+  何を調べているか:
+    表を含むPDF（sample1.pdf: 4表、sample2.pdf: 2表）を処理し、
+    - 表キャプションが図（FIG）とは別の TABLE ラベルで、表番号・ページ
+      ごとに文単位で正しく連番されているか
+    - 表領域が図と同様にPNG画像として images/ に切り出されているか
+    を検証する。スイート[B]の図キャプション検証（
+    test_figure_caption_is_separated_from_body_text）を「表」向けに
+    拡張したテスト群であり、共通ヘルパー _assert_table_caption /
+    _assert_table_pngs_extracted（テストファイル内のみで完結する
+    ヘルパーで、explain.txt側の対象ではない）を使い回している。
+
+  検証カテゴリ: ◆実データ・要人間検証
+    Bと同様、期待値（表キャプションの正確な文言、PNGファイル名）は
+    MinerUがsample1.pdf/sample2.pdfを実際にOCRした結果をそのまま
+    ハードコードしたもの。
+
+  テスト対象（explain.txtの該当関数）:
+    - pdf_processor.process_pdf（[2]）
+    - pdf_structure_analyzer.analyze_structure（[2] Step2。図と同じ
+      仕組みで表要素を分類・ID付与できているかを検証）
+    - pdf_text_utils.parse_caption_label（表キャプション文字列からの
+      種別・番号抽出）
+    - pdf_document_builder.build_document（[2] Step4。表画像の保存と
+      TABLEラベル付きMarkdown出力）
+
+
+----------------------------------------------------------------------
+[E] 章指定（--chapter）パース・解決スイート（PDF不使用の2テストを含む。
+    残りはsample0.pdf / sample2.pdf / sample3.pdf／7テスト・
+    parametrize込みで計16ケース）
+----------------------------------------------------------------------
+  該当関数: test_parse_chapter_spec_valid（5ケース）,
+    test_parse_chapter_spec_invalid（4ケース）,
+    test_resolve_chapter_page_range_requires_toc,
+    test_resolve_chapter_page_range_with_real_toc,
+    test_resolve_chapter_page_range_out_of_range,
+    test_resolve_chapter_page_range_skips_roman_numeral_front_matter,
+    test_resolve_chapter_page_range_without_page_labels_uses_all_top_level_entries
+
+  何を調べているか:
+    - test_parse_chapter_spec_valid/invalid: "1,2"/"1-2"等の章指定
+      文字列が正しく章番号リストへ変換されるか、"0"/"abc"/"2-1"等の
+      不正な指定がエラーになるか（PDFを使わない純粋なパーステスト）。
+    - test_resolve_chapter_page_range_requires_toc: 目次を持たない
+      PDF（sample0.pdf）では --chapter がエラーになるか。
+    - test_resolve_chapter_page_range_with_real_toc: 目次を持つ
+      sample2.pdfで、章番号→物理ページ範囲の変換が目次の並びから
+      正しく計算されるか（単一章・複数章指定の両方）。
+    - test_resolve_chapter_page_range_out_of_range: 目次に存在しない
+      章番号を指定した場合にエラーになるか。
+    - test_resolve_chapter_page_range_skips_roman_numeral_front_matter:
+      書籍PDF（sample3.pdf）で、ローマ数字の前付け見出し（Preface等）
+      を章として数えず、算用数字ページが始まってから最初の目次項目を
+      第1章とみなせているか。
+    - test_resolve_chapter_page_range_without_page_labels_uses_all_top_level_entries:
+      印刷ページラベル情報を持たないPDF（sample2.pdf）では、前付け
+      判定を行わず従来通り目次の最上位階層すべてを章として数える
+      （後方互換）ことの確認。
+
+  検証カテゴリ: ◆仕様完結型（parse_chapter_spec系2テスト）／
+    ◆実データ・要人間検証（resolve_chapter_page_range系5テスト）
+    後者の期待値（例: sample2.pdf章1→(2,3)）は、fitzが読み取るTOC・
+    印刷ページラベルという客観的な生メタデータ自体は正確だが、
+    そこから「次の開始ページの直前まで」という章範囲を計算した結果を
+    人間が手計算して期待値に固定したもの。この計算結果が「利用者が
+    直感的に正しいと思う章分け」と一致しているかは、独立検証されて
+    いない。
+
+  テスト対象（explain.txtの該当関数）:
+    - pdf_chapter_resolver.parse_chapter_spec（[1]）
+    - pdf_chapter_resolver.resolve_chapter_page_range（[0][1]）
+
+
+----------------------------------------------------------------------
+[F] 見出しへの合成章ID付与スイート（自作データ + sample3.pdf／2テスト）
+----------------------------------------------------------------------
+  該当関数: test_unnumbered_headings_get_synthetic_section_ids,
+    test_unnumbered_headings_in_real_book_pdf
+
+  何を調べているか:
+    書籍PDFにありがちな「章番号の付かない見出し」（例:
+    "Symbol Emergence Systems: Overview"）に対し、文書全体で一意な
+    合成章ID（"u1","u2",...）が振られ、直後の本文文IDにもその章IDが
+    正しく反映されるか。
+    - test_unnumbered_headings_get_synthetic_section_ids: MinerUの
+      content_list形式を模した最小限のitemsを自作し、実際のPDFファイル
+      やMinerU実行を介さずにanalyze_structureを直接呼び出すことで高速に
+      検証する（スイート[B][D]のような実PDF経由ではない）。
+    - test_unnumbered_headings_in_real_book_pdf: 上記の自作データでの
+      検証を、実際のsample3.pdf（印刷ページラベル55〜60、物理ページ
+      67〜72）をprocess_pdfで実際に処理して裏取りする。このページ範囲
+      には番号無し見出し（"u1"〜"u6"）と番号付き見出し（"1. Sampling-
+      based methods:"等）が実際に混在しており、fixture不要・6ページ分
+      のみというCLAUDE.mdの運用規定に沿った最小限の範囲で、実データでの
+      挙動を確認する。2026-08-08に追加。
+
+  検証カテゴリ: ◆仕様完結型（test_unnumbered_headings_get_synthetic_
+    section_ids）／◆実データ・要人間検証（test_unnumbered_headings_
+    in_real_book_pdf）
+    前者は入力が自作データのためコードのロジックだけから正しさが
+    判定できるが、後者はMinerUが実際にsample3.pdfをOCRした見出し
+    文言（"Probabilistic Generative Models..."等）をそのまま期待値に
+    しており、Bと同種のリスクを持つ。
+
+  テスト対象（explain.txtの該当関数）:
+    - pdf_structure_analyzer.analyze_structure（[2] Step2。自作データ
+      （test_unnumbered_headings_get_synthetic_section_ids）と実データ
+      （test_unnumbered_headings_in_real_book_pdf）の両方から、内部の
+      ヘッダー・本文文への合成章ID割り当てロジックを検証）
+    - pdf_processor.process_pdf / pdf_mineru_runner.run_mineru /
+      pdf_document_builder.build_document / _render_page_markdown
+      （test_unnumbered_headings_in_real_book_pdfが、process_pdf経由で
+      これらを実際に実行し、出力されたpage_67〜72_en.mdのHEADING行を
+      検証する）
+
+
+----------------------------------------------------------------------
+[G] 翻訳・PDF生成の統合テストスイート（sample0.pdf・DeepLモック／3テスト）
+----------------------------------------------------------------------
+  該当関数: test_translate_and_export_with_mocked_deepl,
+    test_translate_and_export_translates_all_translatable_units,
+    test_translate_and_export_excludes_references_section
+
+  何を調べているか:
+    CLAUDE.mdの運用規定（pytest実行時はDeepLの有料APIキーを消費しない）
+    に従い、いずれも `translate_paper.translate_with_deepl` を
+    monkeypatchでダミー関数（すべての翻訳対象文に固定文字列"これは
+    テスト用の日本語訳です。"を返す）に差し替えて `translate_and_export`
+    （1.2.2: タグ解析・翻訳・PDF生成）を実行する、という共通の仕組みを
+    持つ3テスト。2026-08-09に、1テスト目の検証の薄さを補強する目的で
+    2テスト目・3テスト目を追加した。
+
+    - test_translate_and_export_with_mocked_deepl（元祖・sample0.pdf
+      実データ使用）: スイート[B]の`processed` fixture（sample0.pdf
+      処理済みの出力ディレクトリ）を入力に使い、
+      1. 出力ファイルが3つ、正しく（存在し・空でなく）生成されているか
+         （対訳版／英語版／日本語版）
+      2. そのうちpaper_ja.pdfに、モック翻訳文字列由来の日本語が1文字
+         でも含まれているか
+      だけを確認する。「1文字でもあればPASS」という薄い検証のため、
+      翻訳対象50文中49文が未翻訳でも検知できない。
+
+    - test_translate_and_export_translates_all_translatable_units
+      （自作Markdown使用）: 翻訳対象文の数が既知（5文: title 1 +
+      heading 1 + body_sentence 3）の自作Markdownを用意し、モック
+      訳文字列が出力PDFに**ちょうど5回**出現することを確認する。
+      1テスト目の弱点（一部だけ翻訳されていても気づけない）を補強する。
+
+    - test_translate_and_export_excludes_references_section（自作
+      Markdown使用）: 通常セクションと参考文献セクション（見出し
+      "REFERENCES"＋本文1文）を含む自作Markdownを用意し、参考文献
+      セクションの見出し・本文は翻訳対象から除外され原文の英語のまま
+      出力されることを確認する。sample0.pdf（2ページの論文抜粋）には
+      参考文献セクションが含まれないため、1テスト目では
+      `exclude_references_section`のこの分岐が実質未検証だった。
+
+    後者2テストはprocess_pdf/MinerUを一切経由しないため、数秒で
+    完了する（1テスト目のみ、`processed` fixture経由でMinerUが
+    実行される）。
+
+  検証カテゴリ: ◆機械的チェック・要人間検証（十分性のリスク）
+    3テストとも、実データ（sample0.pdfや自作Markdown）の内容そのもの
+    を信用する形の期待値（B/D/E/Fのような、MinerU OCR結果や計算結果
+    のハードコード）は持たない。ただしtest_translate_and_export_
+    with_mocked_deeplは「1文字でもあればPASS」という検証範囲の薄さ
+    ゆえに、それ単体では「1.2.2が本当に正しく動いている」ことを十分
+    には保証できない、という十分性のリスクを抱えていた。
+
+    2026-08-09に追加した後者2テストは、この十分性のリスクを部分的に
+    軽減する（翻訳網羅性・参考文献除外という2つの具体的な分岐を、
+    process_pdfを経由しない自作データで直接カバーする）。ただし
+    「対訳版レイアウト」「見出し・段落の構造」「数式(KaTeX)描画」
+    「単一の参考文献パターン以外のセクション除外条件」等は依然未検証
+    であり、3テストになっても検証範囲が完全になったわけではない
+    （どこまで自作データのテストケースを増やすかは、費用対効果の
+    判断が必要）。
+
+    なお、Gは1.2.1（process_pdf）自体は検証していない。
+    test_translate_and_export_with_mocked_deeplがPASSするために
+    1.2.1へ要求している条件も、「1.2.1の出力内容が正しいこと」では
+    なく「1.2.1が構文的に妥当な（parse_output_dirが解析できる）タグ
+    付きMarkdownを、翻訳対象の文を1つ以上含む形で出力していること」
+    という緩い条件である。また、1.2.2単体のテストのはずが、この
+    テストに限り実行のたびに1.2.1（process_pdf）が`processed`
+    fixture経由で再実行されるという、別種の構造上の課題（テストの
+    意図と実際の依存関係の不一致）も残っている（対応は見送り済み）。
+
+  テスト対象（explain.txtの該当関数）:
+    - translate_paper.translate_and_export（[0]。Step2〜4のみを
+      再実行するエントリポイント）
+    - md_tag_parser.parse_output_dir / build_document_context /
+      exclude_references_section（[0][4]。translate_and_export内部で
+      呼ばれる。exclude_references_sectionはtest_translate_and_
+      export_excludes_references_sectionによって直接検証される）
+    - deepl_translator.translate_with_deepl（[0][5]。ただし実体は
+      monkeypatchでダミー関数に差し替えられているため、DeepL API通信
+      そのものではなく「翻訳結果(ja_text)が後続のPDF生成に正しく
+      反映されるか」という接続部分のみが検証対象になる）
+    - pdf_renderer.build_blocks / render_all_pdfs（[0][6]。3種PDFが
+      実際に生成されることの検証を通じて間接的にテストされる）
+
+
+----------------------------------------------------------------------
+[H] 印刷ページラベル解決スイート（sample3.pdf / sample2.pdf／4テスト・
+    parametrize込みで計10ケース）
+----------------------------------------------------------------------
+  該当関数: test_resolve_physical_page_for_sample3（7ケース）,
+    test_resolve_physical_page_unknown_label_raises,
+    test_resolve_physical_page_without_page_labels_raises,
+    test_resolve_physical_page_range_matches_previously_verified_pages
+
+  何を調べているか:
+    - test_resolve_physical_page_for_sample3: "cov"/"COV"/"Cover"
+      （大文字小文字・短縮形の同一視）、"i"、"xviii"、"55"、"60"と
+      いった印刷ページラベルが、sample3.pdfの正しい物理ページ番号へ
+      変換されるか（"55"/"60"は元々"36"/"37"だったが、2026-08-08に
+      スイートFの実データテストと同じ印刷ページラベル55〜60に統一）。
+    - test_resolve_physical_page_unknown_label_raises: 存在しない
+      ラベル（"zzz"）を指定した場合にエラーになるか。
+    - test_resolve_physical_page_without_page_labels_raises: 印刷
+      ページラベル情報を持たないPDF（sample2.pdf）ではエラーになるか。
+    - test_resolve_physical_page_range_matches_previously_verified_pages:
+      開始・終了2つのラベル（"36"〜"41"）から物理ページ範囲
+      （49〜53）へ正しく変換されるか（ラベルにギャップがあるケース）。
+      ※このテストのみ意図的に"36"〜"41"のまま変更していない。印刷
+      ページ"38"が欠番のため"37"の次が"39"になるという、他のどの
+      テストにも無いギャップ処理の検証がこのテストの本質であり、
+      "55"〜"60"（欠番なし・6ラベル=6物理ページの1:1対応であることを
+      別途確認済み）に置き換えるとその検証価値が失われるため。
+
+  検証カテゴリ: ◆実データ・要人間検証（ただしリスクは低め）
+    期待値（例:"55"→物理67）は、fitzの`get_label()`が返す印刷ページ
+    ラベルを人間が実際に読んで得た値。Eの章範囲計算のような複雑な
+    導出ロジックは無く、ラベルと物理ページ番号のほぼ直接的な対応
+    関係を確認しているだけなので、計算ロジックの誤りリスクはEより
+    低い。ただし「読み取った値が本当にそのページの表記と一致するか」
+    は、他の実データ系テストと同様、独立検証されてはいない。
+
+  テスト対象（explain.txtの該当関数）:
+    - pdf_page_label_resolver.resolve_physical_page（[1]）
+    - pdf_page_label_resolver.resolve_physical_page_range（[0][1]）
+
+
+----------------------------------------------------------------------
+[I] ページ範囲決定ロジック（優先順位）スイート（sample3.pdf／2テスト）
+----------------------------------------------------------------------
+  該当関数: test_resolve_page_range_conflicting_start_and_start_label_raises,
+    test_resolve_page_range_prefers_page_label_over_chapter
+
+  何を調べているか:
+    - test_resolve_page_range_conflicting_start_and_start_label_raises:
+      --start（67）と --start-label（"55"）を同時指定した場合に、
+      どちらを優先すべきか一意に決まらないためエラーになるか。
+    - test_resolve_page_range_prefers_page_label_over_chapter:
+      --start-label/--end-label（"55"/"60"）が --chapter より優先して
+      解決される（結果(67,72)になる）か（--start/--endが優先される
+      のと同じ優先順位になっているか）。
+      （いずれも元は"36"/"41"系の値だったが、2026-08-08にスイートFの
+      実データテストと同じ55〜60系へ統一。具体的な数値の一意性が本質
+      ではなく「優先順位ロジックが正しいか」を検証するテストのため、
+      値の変更による検証価値の低下は無い）
+
+  検証カテゴリ: ◆仕様完結型
+    sample3.pdfの実際のページ番号（67・"55"等）を入力の材料として
+    使ってはいるが、検証しているのは「複数のページ範囲指定オプション
+    のうちどれが優先されるか」という優先順位ロジックであり、これは
+    コードを読めば正誤が自明に判定できる。具体的な数値自体が本当に
+    正しいかはH側の検証範囲であり、Iはそれを前提として借用している
+    だけ（コンフリクト検出テストに至っては具体的な値に一切依存しない）。
+
+  テスト対象（explain.txtの該当関数）:
+    - translate_paper.resolve_page_range（[0][1]。--chapter/--start/
+      --end/--start-label/--end-label の各引数からページ範囲を決定
+      する優先順位ロジックそのものを検証する）
+
+
+----------------------------------------------------------------------
+[J] 入力PDFファイル存在チェックスイート（sample0.pdf + 架空の
+    存在しないパス／2テスト）
+----------------------------------------------------------------------
+  該当関数: test_require_pdf_exists_raises_for_missing_file,
+    test_require_pdf_exists_passes_for_existing_file
+
+  何を調べているか:
+    存在しないPDFパスを指定した場合に、fitz（PyMuPDF）が送出する生の
+    FileNotFoundErrorではなく、他の入力エラー（章指定・印刷ページ
+    ラベルの解決失敗等）と同じ「分かりやすい日本語メッセージ＋
+    SystemExit」で終了することを検証する、2026-08-08に追加された
+    回帰テストスイート。
+    - test_require_pdf_exists_raises_for_missing_file: 存在しない
+      パス（"input/does_not_exist.pdf"）を渡すと、
+      "入力PDFファイルが見つかりません"を含むSystemExitになるか。
+    - test_require_pdf_exists_passes_for_existing_file: 実在する
+      パス（sample0.pdf）を渡すと何も送出しない（正常系）か。
+
+  検証カテゴリ: ◆仕様完結型
+    `Path(pdf_path).is_file()`というファイルシステムの存在確認のみで、
+    PDFの中身は一切見ない。sample0.pdfを使うのは「実在するファイルの
+    例」として借用しているだけで、その内容の正しさとは無関係。
+
+  テスト対象（explain.txtの該当関数）:
+    - translate_paper._require_pdf_exists（[0][1.0]。main()内で
+      argparseの直後・resolve_page_rangeより前に呼ばれ、入力PDFの
+      存在確認とエラーメッセージの統一を担う）
+
+
+■ まとめ表（スイート → テスト数 → 検証カテゴリ → 主なテスト対象関数）
+
+  凡例: 仕=◆仕様完結型（検証不要） / 実=◆実データ・要人間検証（正確性）
+        / 機=◆機械的チェック・要人間検証（十分性）
+
+  B PDF解析パイプライン基本検証             11  実      process_pdf, run_mineru,
+                                                       analyze_structure,
+                                                       split_sentences等,
+                                                       build_document
+  C 文字列処理ユーティリティ単体テスト        3  仕      split_sentences,
+                                                       HEADING_RE/slugify_section_name,
+                                                       parse_caption_label
+  D 表キャプション・表画像抽出                4  実      process_pdf,
+                                                       analyze_structure,
+                                                       parse_caption_label,
+                                                       build_document
+  E 章指定パース・解決                        7  仕/実   parse_chapter_spec（仕）,
+                                                       resolve_chapter_page_range（実）
+  F 見出しへの合成章ID付与                    2  仕/実   analyze_structure（両方から）,
+                                                       process_pdf, run_mineru,
+                                                       build_document（実データ側のみ）
+  G 翻訳・PDF生成の統合（DeepLモック）        3  機      translate_and_export,
+                                                       md_tag_parser群,
+                                                       translate_with_deepl,
+                                                       build_blocks/render_all_pdfs
+  H 印刷ページラベル解決                      4  実      resolve_physical_page,
+                                                       resolve_physical_page_range
+                                                       （リスクは低め）
+  I ページ範囲決定ロジックの優先順位          2  仕      resolve_page_range
+  J 入力PDFファイル存在チェック               2  仕      _require_pdf_exists
+  ------------------------------------------------------------------
+  合計                                       38 test_関数
+  （うち5関数がparametrizeにより複数ケースを検証するため、実行時の
+    テストケース総数はこれより多い）
+
+  「実」に分類される B・D・E・F（実データ側）・H は、期待値の妥当性が
+  MinerUのOCR結果やTOC/ラベルからの計算・参照結果を信用する形で成立
+  しており、独立した人間検証の記録が無い（Hは直接参照でロジックが
+  単純なためリスクは相対的に低い）。これらは「壊れていないことの
+  検知」には有効だが、「そもそも正しいことの保証」にはならない点に
+  注意が必要である。
+
+  「機」に分類されるG（3テスト）は、実データの解釈結果を信用する
+  リスクは無いが、代わりに「チェックの粒度が本当に十分か」という
+  別種の検証が必要である。2026-08-09に2テスト追加し（翻訳網羅性・
+  参考文献除外）十分性を部分的に改善したが、対訳版レイアウトや数式
+  描画などは依然未検証であり、今後さらにテストケースを追加する余地
+  が残っている。

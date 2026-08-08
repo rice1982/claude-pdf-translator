@@ -1,0 +1,1104 @@
+======================================================================
+ explain.txt について（読み方ガイド）
+======================================================================
+
+このファイルは2部構成である。
+
+  第1部「関数呼び出し構造 全一覧」（このすぐ下から始まる）
+    translate_paper.py の main() を起点に、実際に呼び出される全関数
+    を「本の目次」のように呼び出し順で番号付けした一覧。各関数を
+    「入力」「出力」「処理内容」「テスト対象」の4項目で説明する、
+    このファイルの唯一の正データ（詳細情報の集約先）。
+
+  第2部「なぜファイル単位でこう分類されているのか」（末尾）
+    第1部に登場する関数が、なぜそのスクリプトファイルに実装されて
+    いるのかを、第1部の番号を参照しながら説明する。第1部の内容を
+    繰り返すものではなく、同じ情報を「ファイル分割の理由」という
+    別の軸で見るとどうなるか、という読み方ガイド。
+
+■ 第1部の読み方
+
+  - 番号は呼び出し順（親の直下の子は「親番号.連番」）。番号が深い
+    ほどネストした（より内側から）呼び出しであることを示す。
+  - 「1.0」は例外的な表記。「main()内で1.1（resolve_page_range）
+    より前に呼ばれる」という意味で、1.1以下が既に確定した番号体系の
+    ため、後から追加した関数をこの形で挿入している。
+  - 各関数のブロックは必ず「入力」「出力」「処理内容」「テスト対象」
+    の4項目を持つ。引数・戻り値が複数ある場合は箇条書きでそれぞれの
+    意味を記す。「テスト対象: なし」は、専用の直接テストが無く、
+    上位関数のテスト実行時に間接的に実行されるのみであることを示す。
+  - 同じ関数が複数箇所から呼ばれる場合、初出箇所でのみ詳細を展開し、
+    以降は「→ X.X.X と同一」または「（→参照）」とだけ記す（重複説明
+    を避けるため）。
+
+■ 全体像（4層構造）
+
+  このツールは、1本のCLIコマンド translate_paper.py を起点に、
+  「PDF解析(前半2ステップ) → タグ解析 → 翻訳 → PDFレンダリング」という
+  一本道のパイプラインを実行する。各段階は互いの内部実装を知らず、
+  データ構造（pdf_models.py / translation_models.py）だけを介して
+  次の段階に渡す「バケツリレー」方式になっている。呼び出しの詳細は
+  この直後の第1部を、ファイル分割の理由は末尾の第2部を参照。
+
+  [ユーザー]
+     │ python translate_paper.py <PDF> <出力先> [--chapter/--start/--end/...]
+     ▼
+  translate_paper.py  … 全体の司令塔（エントリポイント）
+     │
+     ├─(1)ページ範囲の決定 …… pdf_chapter_resolver.py / pdf_page_label_resolver.py
+     ├─(2)PDF解析 ………………… pdf_processor.py（さらに4ステップに分解）
+     ├─(3)タグ解析 …………………  md_tag_parser.py
+     ├─(4)翻訳 …………………………  deepl_translator.py（math_protection.py と連携）
+     └─(5)PDF生成 …………………… pdf_renderer.py（katex_assets.py と連携）
+
+
+======================================================================
+ 第1部: 関数呼び出し構造 全一覧（translate_paper.py の main() を起点に、
+ 目次形式で番号付けしたもの。同じ関数が複数箇所から呼ばれる場合は
+ 初出箇所でのみ展開し、以降は「→ 参照」とだけ記す。各項目は
+ 「入力（引数）」「出力」「処理内容」「テスト対象」の4つに分けて
+ 記載する）
+======================================================================
+
+1. main（translate_paper.py）
+  入力: なし
+  出力: なし
+  処理内容: CLI引数（pdf_path, output_dir, --chapter, --start, --end,
+    --start-label, --end-label）をargparseで解析し、1.0で入力PDFの
+    存在を確認した上で、resolve_page_rangeでページ範囲を確定し、
+    run_pipelineを呼び出す、コマンドライン実行時のエントリポイント。
+  テスト対象: main自体を直接呼び出すテストは無い（CLIレベルのエンドツーエンドテストは実施していない）。
+
+  1.0 _require_pdf_exists（translate_paper.py）
+    入力:
+      - pdf_path: 入力PDFファイルのパス（args.pdf_path）
+    出力: なし
+    処理内容: Path(pdf_path).is_file()で入力PDFファイルが実在するかを
+      確認する。resolve_page_range/run_pipeline内部（fitzでのPDF読み
+      込み等）は存在しないパスに対して生のFileNotFoundErrorを送出する
+      が、それだと他の入力エラー（章指定・印刷ページラベルの解決失敗
+      等）とは違い分かりにくいトレースバックがそのまま表示されてしま
+      う。この事前チェックにより、他のエラーと同じ「分かりやすい日本
+      語メッセージ＋SystemExit」の形に統一する。main()内では
+      argparseの直後、resolve_page_range（1.1）より前に呼ばれる
+      （番号は呼び出し順に合わせて1.0としているが、mainの子としては
+      1.1と対等な最初の呼び出し先）。
+    テスト対象:
+      - スイートJ（入力PDFファイル存在チェック）: test_require_pdf_exists_raises_for_missing_fileで、存在しないパスを渡した場合にfitzの生のFileNotFoundErrorではなく「入力PDFファイルが見つかりません: ...」というSystemExitになることを、test_require_pdf_exists_passes_for_existing_fileで、実在するパス（sample0.pdf）では何も送出しない（正常系）ことを確認している。
+
+  1.1 resolve_page_range（translate_paper.py）
+    入力:
+      - pdf_path: 入力PDFファイルのパス
+      - chapter: --chapterで指定された章番号文字列（例:"1,2"）。未指定ならNone
+      - start: --startで指定された開始物理ページ番号。未指定ならNone
+      - end: --endで指定された終了物理ページ番号。未指定ならNone
+      - start_label: --start-labelで指定された開始印刷ページラベル。未指定ならNone
+      - end_label: --end-labelで指定された終了印刷ページラベル。未指定ならNone
+    出力: (開始物理ページ, 終了物理ページ)のタプル
+      - 開始物理ページ: 処理対象の先頭ページ番号（1始まり）、または未指定ならNone
+      - 終了物理ページ: 処理対象の末尾ページ番号（1始まり・両端含む）、または未指定ならNone
+    処理内容: --start系/--start-label系の同時指定はValueErrorにし、
+      「物理ページ指定 > 印刷ラベル指定 > 章指定」の優先順位でページ
+      範囲を1本化する。
+    テスト対象:
+      - スイートI（ページ範囲決定ロジックの優先順位）: test_resolve_page_range_conflicting_start_and_start_label_raisesで--startと--start-labelを同時指定した場合にValueErrorになることを、test_resolve_page_range_prefers_page_label_over_chapterで--start-label/--end-labelが--chapterより優先して解決されることを確認している。
+
+    1.1.1 resolve_physical_page_range（pdf_page_label_resolver.py）
+      入力:
+        - pdf_path: 入力PDFファイルのパス
+        - start_label: 開始印刷ページラベル（例:"cov","i","36"）。Noneなら変換しない
+        - end_label: 終了印刷ページラベル。Noneなら変換しない
+      出力: (開始物理ページ, 終了物理ページ)のタプル
+        - 開始物理ページ: start_labelに対応する物理ページ番号（int）。start_labelがNoneならNone
+        - 終了物理ページ: end_labelに対応する物理ページ番号（int）。end_labelがNoneならNone
+      処理内容: start_label/end_labelそれぞれについて1.1.1.1を呼び出し、
+        印刷ページラベルを物理ページ番号へ変換する。
+      テスト対象:
+        - スイートH（印刷ページラベル解決）: test_resolve_physical_page_range_matches_previously_verified_pagesで、印刷ページラベル"36"〜"41"が物理ページ49〜53に正しく変換されることを確認している。
+
+      1.1.1.1 resolve_physical_page（pdf_page_label_resolver.py）
+        入力:
+          - pdf_path: 入力PDFファイルのパス
+          - label: 変換したい印刷ページラベル1つ（例:"cov","i","xviii","36"）
+        出力: 対応する物理ページ番号（int、1始まり）
+        処理内容: fitzでPDFを開き全ページのget_label()を走査し、大文字
+          小文字を無視して一致するページを探す（見つからなければ
+          PageLabelResolutionError）。
+        テスト対象:
+          - スイートH（印刷ページラベル解決）: test_resolve_physical_page_for_sample3で"cov"/"COV"/"Cover"/"i"/"xviii"/"55"/"60"等のラベルが正しい物理ページ番号に変換されることを、test_resolve_physical_page_unknown_label_raisesで存在しないラベルを指定した場合にPageLabelResolutionErrorになることを、test_resolve_physical_page_without_page_labels_raisesで印刷ページラベル情報を持たないPDFではエラーになることを確認している。
+
+    1.1.2 resolve_chapter_page_range（pdf_chapter_resolver.py）
+      入力:
+        - pdf_path: 入力PDFファイルのパス
+        - chapter_spec: 章指定文字列（例:"1,2"や"1-2"）
+      出力: (開始物理ページ, 終了物理ページ)のタプル（両端含む、1始まり）
+        - 開始物理ページ: 指定された章のうち最も早い開始ページ
+        - 終了物理ページ: 指定された章のうち最も遅い終了ページ
+      処理内容: 目次(TOC)最上位階層の項目から章の開始ページ群を求め、
+        指定章番号に対応するページ範囲を計算する。
+      テスト対象:
+        - スイートE（章指定パース・解決）: test_resolve_chapter_page_range_requires_tocで目次を持たないPDFでは--chapterがエラーになることを、test_resolve_chapter_page_range_with_real_tocで目次を持つPDFの章番号→ページ範囲変換が正しいことを、test_resolve_chapter_page_range_out_of_rangeで目次に存在しない章番号を指定した場合のエラーを、test_resolve_chapter_page_range_skips_roman_numeral_front_matterで書籍PDFの前付け（ローマ数字ページ）を章として数えないことを、test_resolve_chapter_page_range_without_page_labels_uses_all_top_level_entriesで印刷ページラベルを持たないPDFでの後方互換動作を確認している。
+
+      1.1.2.1 parse_chapter_spec（pdf_chapter_resolver.py）
+        入力:
+          - spec: 章指定文字列（例:"1,2"、"1-2"、"1,3-4"）
+        出力: 昇順ソート済み・重複除去済みの章番号リスト（list[int]）
+        処理内容: カンマ・ハイフン区切りの章指定を展開する。不正形式
+          （空文字列・"0"・非数値・逆順範囲等）はChapterResolutionErrorにする。
+        テスト対象:
+          - スイートE（章指定パース・解決）: test_parse_chapter_spec_validで"1,2"/"1-2"/"1,3-4"等の正常な章指定が正しく章番号リストに変換されることを、test_parse_chapter_spec_invalidで""/"0"/"abc"/"2-1"等の不正な指定がChapterResolutionErrorになることを確認している。
+
+      1.1.2.2 _is_body_page（pdf_chapter_resolver.py）
+        入力:
+          - doc: 開いた状態のfitz.Documentオブジェクト
+          - page_number_1based: 判定したい物理ページ番号（1始まり）
+        出力: bool（本文＝算用数字の印刷ページならTrue）
+        処理内容: 該当ページの印刷ページラベルが算用数字かどうかを
+          判定し、前付け（ローマ数字ページ）を章カウントから除外する。
+        テスト対象:
+          - スイートE（章指定パース・解決）: test_resolve_chapter_page_range_skips_roman_numeral_front_matterで、ローマ数字の前付けページが章の起点として数えられないことを、test_resolve_chapter_page_range_without_page_labels_uses_all_top_level_entriesで印刷ページラベルを持たないPDFでは本関数が常にFalseを返し全項目がそのまま章として数えられることを確認している。
+
+      1.1.2.3 _end_page_for（pdf_chapter_resolver.py）
+        入力:
+          - start_page: 終了ページを求めたい章の開始ページ番号
+        出力: その章の終了ページ番号（int）
+        処理内容: resolve_chapter_page_range内部のネスト関数
+          （クロージャ）。全章の開始ページ集合の中でstart_pageより
+          大きい最小値の直前まで、無ければPDF総ページ数までを返す。
+        テスト対象:
+          - スイートE（章指定パース・解決）: test_resolve_chapter_page_range_with_real_tocで、章の終了ページが次の章の開始ページの直前として正しく計算されること（例: 章1→(2,3)、章2→(4,9)）を確認している。
+
+  1.2 run_pipeline（translate_paper.py）
+    入力:
+      - pdf_path: 入力PDFファイルのパス
+      - output_dir: 出力先ディレクトリ
+      - start_page: 処理対象の開始物理ページ番号（Noneなら先頭から）
+      - end_page: 処理対象の終了物理ページ番号（Noneなら末尾まで）
+    出力: 生成されたPDFファイルパスのリスト（対訳版・英語版・日本語版）
+    処理内容: process_pdfでPDF解析を行い、translate_and_exportで翻訳・
+      PDF生成まで通しで実行する。
+    テスト対象: run_pipelineを直接呼び出すテストは無い。内部で呼ぶprocess_pdf（→1.2.1参照）とtranslate_and_export（→1.2.2参照）がそれぞれ個別にテストされている。
+
+    1.2.1 process_pdf（pdf_processor.py）
+      入力:
+        - pdf_path: 入力PDFファイルのパス
+        - output_dir: 出力先ディレクトリ（images/サブディレクトリに画像を保存）
+        - translate: 本文1文を翻訳する関数（既定はidentity_translator＝原文をそのまま返す）
+        - start_page: 処理対象の開始ページ番号（1始まり、Noneなら先頭から）
+        - end_page: 処理対象の終了ページ番号（1始まり・両端含む、Noneなら末尾まで）
+      出力: 生成されたページ別Markdownファイルパスのリスト（ページ順）
+      処理内容: PDF解析4ステップ（run_mineru→analyze_structure→
+        translate_units→build_document）を順に呼ぶオーケストレーター。
+      テスト対象:
+        - スイートB（PDF解析パイプライン基本検証）: sample0.pdfを処理した結果を用いる11個のテスト（test_extract_and_number_sentences等）が、`processed` fixture経由でprocess_pdfを実行し、その出力（ページ数・ID付与・画像抽出・数式検出・ノイズ除外等）を検証している。
+        - スイートD（表キャプション・表画像抽出）: sample1.pdf/sample2.pdfを処理した結果を用いるテスト（test_table_captions_sample1等）が、`processed_sample1`/`processed_sample2` fixture経由でprocess_pdfを実行し、表キャプション・表画像の出力を検証している。
+        - スイートF（見出しへの合成章ID付与）: test_unnumbered_headings_in_real_book_pdfが、sample3.pdf（印刷ページラベル55〜60、物理67〜72）に対してprocess_pdfを直接実行し、実データでの見出しID付与を検証している。
+
+      1.2.1.1 run_mineru（pdf_mineru_runner.py）
+        入力:
+          - pdf_path: 入力PDFファイルのパス
+          - work_dir: MinerUの生出力を書き込む作業用ディレクトリ
+          - start_page: 処理対象の開始ページ（0始まり・両端含む、Noneなら先頭から）
+          - end_page: 処理対象の終了ページ（0始まり・両端含む、Noneなら末尾まで）
+        出力: MinerUOutput
+          - items: content_list.jsonの中身（ページ横断のフラットな要素リスト）
+          - images_base: items中のimg_path（相対パス）を解決するための基準ディレクトリ
+        処理内容: MinerUをsubprocessとして実行しcontent_list.jsonを
+          読み込む。失敗時はMinerURunError。
+        テスト対象:
+          - スイートB（PDF解析パイプライン基本検証）: process_pdf経由で間接的に実行され、MinerUによる画像抽出・数式認識等の解析結果がスイートBの各テストの前提として検証される（run_mineru自体の戻り値を直接検証するテストは無い）。
+          - スイートF（見出しへの合成章ID付与）: test_unnumbered_headings_in_real_book_pdf内でprocess_pdf経由で間接的に実行される（sample3.pdfのページ範囲67〜72に対するMinerU解析）。
+
+      1.2.1.2 analyze_structure（pdf_structure_analyzer.py）
+        入力:
+          - items: MinerUOutput.items（content_list.jsonの中身）
+          - images_base: img_path（相対パス）を解決するための基準ディレクトリ
+          - page_offset: --startでPDFの途中から処理した場合の絶対ページオフセット（0始まり、省略時0）
+        出力: StructuredDocument
+          - pages: ページ別の要素列（PageContentのリスト）
+          - translation_units: 翻訳対象文のフラットな一覧
+        処理内容: 1.2.1.2.1〜1.2.1.2.3を順に呼び、本文/非翻訳要素の
+          分類とID付与を行う。
+        テスト対象:
+          - スイートB（PDF解析パイプライン基本検証）: process_pdf経由で間接的に実行され、本文/非翻訳要素の分類・ID付与ロジックがスイートBの各テストで検証される。
+          - スイートD（表キャプション・表画像抽出）: 表要素の分類・TABLEラベル付与が図と同様に行われることを検証する。
+          - スイートF（見出しへの合成章ID付与）: test_unnumbered_headings_get_synthetic_section_idsで、MinerU出力を模した最小限のitemsを直接渡し、番号の無い見出しに合成章ID（"u1","u2",...）が振られ、直後の本文文IDにも反映されることを、test_unnumbered_headings_in_real_book_pdfで、実際のsample3.pdf（印刷ページラベル55〜60）を処理し、番号付き見出しと番号無し見出しが混在する実データでも同ロジックが正しく動くことを確認している。
+
+        1.2.1.2.1 _build_pages（pdf_structure_analyzer.py）
+          入力:
+            - items: content_list要素列
+            - images_base: 画像パス解決の基準ディレクトリ
+            - page_offset: 絶対ページオフセット（0始まり、省略時0）
+          出力: PageContentのリスト（ページ番号順）
+          処理内容: 要素種別ごとに以下の_handle_*へ振り分ける。1要素の
+            失敗は_handle_unknown_itemへフォールバックする。
+          テスト対象:
+            - スイートB（PDF解析パイプライン基本検証）: test_header_and_footer_noise_excludedで、arXiv IDなどの_NOISE_TYPES要素が出力から除外されることを、test_cross_page_paragraph_is_kept_on_starting_pageで、MinerUのpage_idxに基づくページ単位のグルーピングが正しく行われることを確認している。
+
+          1.2.1.2.1.1 _PageBuilder.__init__（pdf_structure_analyzer.py）
+            入力:
+              - page_idx: ページインデックス（0始まり）
+              - page_offset: 絶対ページオフセット（省略時0）
+            出力: なし（インスタンスの状態を初期化するのみ）
+            処理内容: 1ページ分の要素構築中に必要な状態（elements,
+              front_matter_count, unlabeled_seq）を初期化する。
+              _build_pages内でページごとにインスタンス化される小さな
+              ヘルパークラスのコンストラクタ。
+            テスト対象: 直接のテストは無く、_build_pages内でページごとにインスタンス化される際に間接的に実行されるのみ。
+
+          1.2.1.2.1.2 _handle_list_item（pdf_structure_analyzer.py）
+            入力:
+              - item: MinerUのcontent_list要素1件（辞書、list_itemsを持つ）
+              - builder: 処理中ページの状態を保持する_PageBuilder
+            出力: なし（builder.elementsへTextBlockElementを追記）
+            処理内容: 箇条書き・参考文献リストの各項目を1.2.1.2.1.2.1
+              で整形しTextBlockElementとして追加する。
+            テスト対象: 箇条書き・参考文献リストの処理に特化したテストは無く、process_pdf実行時に間接的に実行されるのみ。
+
+            1.2.1.2.1.2.1 restore_merged_hyphens（pdf_text_utils.py）
+              入力:
+                - text: 変換対象の文字列（MinerUのtext_levelなし本文やキャプション等）
+              出力: ハイフン復元後の文字列（数式部分は元のまま保持）
+              処理内容: $...$の数式部分を避けつつ、本文中の該当語を
+                1.2.1.2.1.2.1.1へ渡して判定する。
+              テスト対象:
+                - スイートB（PDF解析パイプライン基本検証）: _handle_text_item等を経由して間接的に実行され、ハイフン復元済みの本文（例:"data-efficient"）がスイートBの各テストの前提として現れる（本関数の戻り値を直接検証する専用テストは無い）。
+
+              1.2.1.2.1.2.1.1 repl（pdf_text_utils.py）
+                入力:
+                  - m: re.Matchオブジェクト（マッチした複合語）
+                出力: 置換後の語（文字列）
+                処理内容: restore_merged_hyphens内部のネスト関数
+                  （re.subのコールバック）。1.2.1.2.1.2.1.1.1を呼び、
+                  結果があればそれを、無ければ元の語をそのまま返す。
+                テスト対象: restore_merged_hyphens内部のクロージャであり、直接のテストは無い。
+
+                1.2.1.2.1.2.1.1.1 split_merged_compound（pdf_text_utils.py）
+                  入力:
+                    - word: 判定対象の単語（辞書に無い可能性のある結合語）
+                  出力: "left-right"形式の文字列、または分割できなければNone
+                  処理内容: 1.2.1.2.1.2.1.1.1.1で既知語かどうかを判定
+                    しながら分割点を探す。
+                  テスト対象: restore_merged_hyphens経由で間接的に実行されるのみで、直接のテストは無い。
+
+                  1.2.1.2.1.2.1.1.1.1 is_known_word（pdf_text_utils.py）
+                    入力:
+                      - word: 判定対象の単語
+                    出力: bool（辞書に存在すればTrue）
+                    処理内容: pyspellcheckerの辞書にwordが存在するかを
+                      返す（英字1文字は常にTrueになる点に注意）。
+                    テスト対象: split_merged_compound経由で間接的に実行されるのみで、直接のテストは無い。
+
+          1.2.1.2.1.3 _handle_image_or_table_item（pdf_structure_analyzer.py）
+            入力:
+              - item: MinerUのcontent_list要素1件（img_path, captionを持つ）
+              - item_type: 要素種別文字列（"image"|"table"|"chart"）
+              - images_base: 画像パス解決の基準ディレクトリ
+              - builder: 処理中ページの状態を保持する_PageBuilder
+            出力: なし（builder.elementsへFigureElement/CaptionElementを追記）
+            処理内容: 図・表・チャートをFigureElement/CaptionElementと
+              して追加する。restore_merged_hyphens（→1.2.1.2.1.2.1と
+              同一）・parse_caption_label・split_sentencesを呼ぶ。
+            テスト対象:
+              - スイートB（PDF解析パイプライン基本検証）: test_figure_caption_is_separated_from_body_text・test_images_are_extracted_as_png・test_figure_reference_is_placed_in_page2_markdownで、図のFigureElement/CaptionElement分離・番号付与・キャプション文分割が正しく行われることを確認している。
+              - スイートD（表キャプション・表画像抽出）: test_table_captions_sample1/2で、表についても同様のTABLEラベル・キャプション分割が正しく行われることを確認している。
+
+              parse_caption_label（pdf_text_utils.py）［上記から呼ばれる］
+                入力:
+                  - text: キャプション文（例:"Fig. 1: Overview..."）
+                出力: (種別"figure"|"table", 番号)のタプル、または
+                  キャプション形式でなければNone
+                処理内容: 正規表現でキャプションの接頭辞・番号を読み取る。
+                テスト対象:
+                  - スイートC（文字列処理ユーティリティ単体テスト）: test_parse_caption_labelで、"Fig. 1:..."/"Figure 3."/"Table 2:..."/キャプション形式でない文字列それぞれについて、種別・番号の抽出結果またはNoneが正しいことを直接確認している。
+                  - スイートD（表キャプション・表画像抽出）: 表キャプション文からのTABLE種別・番号抽出が、スイートDの各テストの前提として間接的に検証される。
+
+              split_sentences（pdf_text_utils.py）［上記から呼ばれる。以降も同一関数］
+                入力:
+                  - text: 1段落分程度の英文テキスト
+                出力: 文単位に分割された文字列のリスト（空文字列は除外）
+                処理内容: 略語（Fig., Sec., e.g.等）直後での誤分割を
+                  回避しながら文分割する。
+                テスト対象:
+                  - スイートB（PDF解析パイプライン基本検証）: test_figure_caption_is_separated_from_body_textで、図キャプションが文単位に正しく分割されることを確認している。
+                  - スイートC（文字列処理ユーティリティ単体テスト）: test_split_sentences_handles_abbreviationsで、"Fig."/"Sec."/"e.g."等の略語直後で誤分割しないことを直接確認している。
+
+          1.2.1.2.1.4 _handle_equation_item（pdf_structure_analyzer.py）
+            入力:
+              - item: MinerUのcontent_list要素1件（数式のLaTeXとimg_pathを持つ）
+              - images_base: 画像パス解決の基準ディレクトリ
+              - builder: 処理中ページの状態を保持する_PageBuilder
+            出力: なし（builder.elementsへEquationElementを追記）
+            処理内容: 数式画像とLaTeXをEquationElementとして追加する
+              （\tag{n}から式番号を取得、無ければフォールバック連番）。
+            テスト対象:
+              - スイートB（PDF解析パイプライン基本検証）: test_all_three_equations_are_detected_with_latexで、\tag{n}からの式番号抽出とEquationElementへの反映が正しいことを確認している。
+
+          1.2.1.2.1.5 _handle_text_item（pdf_structure_analyzer.py）
+            入力:
+              - item: MinerUのcontent_list要素1件（textとtext_levelを持つ）
+              - builder: 処理中ページの状態を保持する_PageBuilder
+              - unnumbered_heading_seq: 文書全体で共有する、番号無し見出し用の連番カウンタ（1要素のリスト）
+            出力: なし（builder.elementsへLabeledElement/HeadingElement/TextBlockElementを追記）
+            処理内容: 前付け・見出し・本文段落を判別し、それぞれの
+              Elementとして追加する。
+            テスト対象:
+              - スイートB（PDF解析パイプライン基本検証）: test_front_matter_labels_are_not_counted_as_sentencesで前付け（タイトル・著者・所属）の判定を、test_chapter_headings_get_dedicated_labelsで見出し判定（HEADING_RE）を、test_inline_math_is_wrapped_in_dollar_signsで本文段落の文分割結果を確認している。
+              - スイートF（見出しへの合成章ID付与）: test_unnumbered_headings_get_synthetic_section_ids（自作データ）とtest_unnumbered_headings_in_real_book_pdf（sample3.pdf印刷ページラベル55〜60の実データ）の両方で、章番号の付かない見出しに合成章ID（"u1","u2",...）を振る分岐を確認している。
+
+              _PageBuilder.has_heading（pdf_structure_analyzer.py）［上記から呼ばれる］
+                入力: なし（self）
+                出力: bool（builder.elementsにHeadingElementが既に含まれればTrue）
+                処理内容: 前付け判定（ページ1冒頭のタイトル・著者・
+                  所属をどこまで割り当てるか）に使う。
+                テスト対象: 直接のテストは無く、_handle_text_item内の前付け判定条件として間接的に実行されるのみ。
+
+              restore_merged_hyphens（→1.2.1.2.1.2.1と同一）
+
+              slugify_section_name（pdf_text_utils.py）［上記から呼ばれる］
+                入力:
+                  - title_text: 見出しテキスト
+                出力: 章ラベル用の短い英字スラッグ（例:"preliminaries"）
+                処理内容: 見出し先頭の英字列を取り出し小文字化する。
+                テスト対象:
+                  - スイートB（PDF解析パイプライン基本検証）: test_chapter_headings_get_dedicated_labelsで、見出しの章名スラッグ（例:"1.introduction"）が正しく付与されることを確認している。
+                  - スイートC（文字列処理ユーティリティ単体テスト）: test_heading_regex_and_slugifyで、"1. INTRODUCTION"→"introduction"等のスラッグ化を直接確認している。
+
+              split_sentences（→1.2.1.2.1.3の項と同一）
+
+          1.2.1.2.1.6 _handle_unknown_item（pdf_structure_analyzer.py）
+            入力:
+              - item: MinerUのcontent_list要素1件
+              - item_type: 要素種別文字列
+              - builder: 処理中ページの状態を保持する_PageBuilder
+              - reason: フォールバック理由（ログ出力用の文字列、省略可）
+            出力: なし（builder.elementsへUnknownElementを追記）
+            処理内容: 未対応種別・例外発生時のフォールバック。
+              1.2.1.2.1.6.1でテキストを拾う。
+            テスト対象: 未対応種別・例外発生時のフォールバック分岐を意図的に発生させるテストは無い。
+
+            1.2.1.2.1.6.1 _extract_raw_text（pdf_structure_analyzer.py）
+              入力:
+                - item: MinerUのcontent_list要素1件
+              出力: テキスト文字列（見つからなければ空文字列）
+              処理内容: 既知の複数フィールド名（text/table_body/
+                list_items/*_caption等）を優先順に試す。
+              テスト対象: _handle_unknown_item経由で間接的に実行されるのみで、直接のテストは無い。
+
+        1.2.1.2.2 _assign_sentence_ids（pdf_structure_analyzer.py）
+          入力:
+            - pages: PageContentのリスト（書き換え対象）
+          出力: なし（pages内の各要素にsentence_idsを設定）
+          処理内容: 本文文・キャプション文に[P{page}-S{n}-{章}-S{m}]
+            形式のIDを付与する。
+          テスト対象:
+            - スイートB（PDF解析パイプライン基本検証）: test_sentence_ids_are_sequential_per_pageで、各ページの文IDが1から欠番なく連番になっていることを確認している。
+            - スイートF（見出しへの合成章ID付与）: test_unnumbered_headings_get_synthetic_section_idsで、合成章IDが文IDの末尾（例:"-u1.symbol-S1"）に正しく反映されることを確認している。test_unnumbered_headings_in_real_book_pdfは見出し行(HEADING)のみを検証しており、本関数が付与する本文文ID自体は直接アサートしていない。
+
+        1.2.1.2.3 _collect_translation_units（pdf_structure_analyzer.py）
+          入力:
+            - pages: PageContentのリスト
+          出力: TranslationUnitのリスト
+          処理内容: 本文・キャプションの文だけを翻訳対象としてフラットに集約する。
+          テスト対象: 直接のテストは無く、analyze_structureの戻り値の一部としてのみ間接的に検証される。
+
+      1.2.1.3 translate_units（pdf_translator.py）
+        入力:
+          - units: 翻訳対象の文一覧（TranslationUnitのリスト、Step2の出力）
+          - translate: 1文を翻訳する関数（既定はidentity_translator）
+        出力: unit_idをキーとする翻訳結果の辞書（dict[str, str]）
+        処理内容: 各文にtranslateを適用し、失敗した文は原文で代替する。
+        テスト対象: process_pdf経由で実行されるが、既定のidentity_translatorを使う限り出力は原文と同一になるため、本関数固有の挙動（翻訳失敗時のフォールバック等）を狙ったテストは無い。
+
+        1.2.1.3.1 identity_translator（pdf_translator.py）
+          入力:
+            - text: 翻訳対象の1文
+          出力: textそのまま
+          処理内容: 翻訳バックエンド未接続時の既定関数（恒等関数）。
+          テスト対象: translate_units経由で間接的に実行されるのみで、直接のテストは無い。
+
+      1.2.1.4 build_document（pdf_document_builder.py）
+        入力:
+          - doc: StructuredDocument（Step2の出力）
+          - translations: unit_id→翻訳後テキストの辞書（Step3の出力）
+          - output_dir: 出力先ディレクトリ
+          - first_page: 出力対象の先頭ページ番号（1始まり）
+          - last_page: 出力対象の末尾ページ番号（1始まり・両端含む）
+        出力: 生成されたMarkdownファイルパスのリスト（ページ順）
+        処理内容: ページごとに1.2.1.4.1を呼び、images/へ画像を保存
+          しつつMarkdownを書き出す。
+        テスト対象:
+          - スイートB（PDF解析パイプライン基本検証）: sample0.pdfの11個のテストが、build_documentの出力（page_*_en.mdの内容・images/配下のPNG）を検証している。
+          - スイートD（表キャプション・表画像抽出）: 表画像・TABLEキャプションを含むMarkdown出力を検証している。
+          - スイートF（見出しへの合成章ID付与）: test_unnumbered_headings_in_real_book_pdfが、sample3.pdf（印刷ページラベル55〜60）のbuild_document出力（page_67〜72_en.md）に含まれるHEADING行を検証している。
+
+        1.2.1.4.1 _render_page_markdown（pdf_document_builder.py）
+          入力:
+            - page: PageContent（1ページ分の要素列）
+            - images_dir: 画像保存先ディレクトリ
+            - translations: unit_id→翻訳後テキストの辞書
+          出力: 1ページ分のMarkdown文字列
+          処理内容: 要素種別ごとにタグ付き行を組み立て、図・数式は
+            1.2.1.4.1.1で画像保存する。
+          テスト対象:
+            - スイートB（PDF解析パイプライン基本検証）: [P1-TITLE]・[P1-S1-abstract-S1]・[P2-FIG1]等、タグ付きMarkdown行の形式がスイートBの各テストで検証されている。
+            - スイートD（表キャプション・表画像抽出）: [P{page}-TABLE{n}]・[P{page}-TABLE{n}-CAPTION-S{n}]形式の行がスイートDの各テストで検証されている。
+            - スイートF（見出しへの合成章ID付与）: [P67-HEADING-u1.probabilistic]・[P69-HEADING-1.sampling]等、合成ID/通常ID双方のHEADING行の形式がtest_unnumbered_headings_in_real_book_pdfで検証されている。
+
+          1.2.1.4.1.1 _save_element_image（pdf_document_builder.py）
+            入力:
+              - element: FigureElementまたはEquationElement
+              - images_dir: 画像保存先ディレクトリ
+              - page_number: ページ番号
+            出力: 保存した画像の相対パス文字列（例:"images/fig_p2_1.png"）
+            処理内容: PILで画像を開きPNG保存する。1.2.1.4.1.1.1で
+              ファイル名を決める。
+            テスト対象:
+              - スイートB（PDF解析パイプライン基本検証）: test_images_are_extracted_as_pngで、fig_p2_1.png・eq_p2_1〜3.pngというファイル名でPNGが正しく保存されることを確認している。
+              - スイートD（表キャプション・表画像抽出）: test_table_images_are_extracted_as_png_sample1/2で、table_p{page}_{n}.pngというファイル名でPNGが正しく保存されることを確認している。
+
+            1.2.1.4.1.1.1 _figure_label（pdf_document_builder.py）
+              入力:
+                - fig_kind: "figure"|"table"|"equation"
+                - number: 図表・数式の番号
+                - labeled: 元論文の番号を読み取れたかどうか（bool）
+              出力: ラベル文字列（例:"FIG3","TABLE1","EQ-UNLABELED2"）
+              処理内容: fig_kindとlabeledに応じてラベル文字列を組み立てる。
+              テスト対象:
+                - スイートB（PDF解析パイプライン基本検証）: test_figure_reference_is_placed_in_page2_markdown等で、"FIG1"のようなラベル文字列が正しく生成されることを確認している。
+                - スイートD（表キャプション・表画像抽出）: test_table_captions_sample1/2で、"TABLE1"等のラベル文字列が正しく生成されることを確認している。
+
+          1.2.1.4.1.2 _translated_sentences（pdf_document_builder.py）
+            入力:
+              - sentences: 原文の文字列リスト
+              - sentence_ids: 各文に対応するID文字列リスト
+              - translations: unit_id→翻訳後テキストの辞書
+            出力: 翻訳済み文字列のリスト（翻訳結果が無い文は原文のまま）
+            処理内容: 各文について翻訳結果があればそれを、無ければ原文を返す。
+            テスト対象: 直接のテストは無い。process_pdf経由のテストでは常に恒等関数を使うため、translations辞書に翻訳結果が入らず原文が使われる側の分岐のみが実行され、その分岐自体を狙った専用テストは無い。
+
+    1.2.2 translate_and_export（translate_paper.py）
+      入力:
+        - output_dir: page_*_en.mdが格納されたディレクトリ
+      出力: 生成されたPDFファイルパスのリスト
+      処理内容: 既存のタグ付きMarkdownに対し翻訳（Step3相当）とPDF
+        生成（Step4相当）のみ実行する。
+      テスト対象:
+        - スイートG（翻訳・PDF生成統合／DeepLモック）: 3テストとも、DeepL呼び出しをmonkeypatchでモック化した上でtranslate_and_exportを実行する。test_translate_and_export_with_mocked_deeplで、sample0.pdf実データ（`processed` fixture経由）から3種PDFが生成されること・paper_ja.pdfに日本語訳が反映されることを、test_translate_and_export_translates_all_translatable_unitsで、自作Markdown（翻訳対象5文）の全文に訳文が反映されている（1文でも欠けていないか）ことを、test_translate_and_export_excludes_references_sectionで、参考文献セクションが翻訳対象から除外され原文のまま残ることを確認している。
+
+      1.2.2.1 parse_output_dir（md_tag_parser.py）
+        入力:
+          - output_dir: page_*_en.mdが格納されたディレクトリ
+        出力: DocUnitの順序付きリスト
+        処理内容: page_*_en.mdを1.2.2.1.1をソートキーにしてページ順に
+          読み込み、1.2.2.1.2で解析・結合する。
+        テスト対象:
+          - スイートG（翻訳・PDF生成統合／DeepLモック）: 3テストいずれも、translate_and_export経由でpage_*_en.mdからDocUnitリストへの変換が正しく行われることが前提として検証される（変換結果が正しくなければ後続の翻訳・PDF生成が失敗する）。
+
+        1.2.2.1.1 _page_number（md_tag_parser.py）
+          入力:
+            - path: Markdownファイルのパス
+          出力: ファイル名から抽出したページ番号（int）
+          処理内容: parse_output_dir内部のネスト関数。sorted()のkeyとして使われる。
+          テスト対象: parse_output_dir内部のソートキーとしてのみ使われ、直接のテストは無い。
+
+        1.2.2.1.2 parse_page_file（md_tag_parser.py）
+          入力:
+            - path: 1ページ分のMarkdownファイルパス
+          出力: DocUnitのリスト
+          処理内容: 行ごとに画像行・タグ行を正規表現判定し、
+            1.2.2.1.2.1でkind分類してDocUnitを組み立てる。
+          テスト対象: parse_output_dir経由で間接的に実行されるのみで、1ファイル単位での直接テストは無い。
+
+          1.2.2.1.2.1 _classify（md_tag_parser.py）
+            入力:
+              - tag: タグ文字列（例:"P1-S1-abstract-S1"）
+            出力: kind文字列（"title"|"authors"|"affil"|"heading"|
+              "unknown"|"caption_sentence"|"body_sentence"のいずれか）
+            処理内容: タグ文字列のパターンから種別を判定する。
+            テスト対象: タグ文字列からkindを判定するロジックそのものを直接検証するテストは無く、parse_page_file経由で間接的に実行されるのみ。
+
+      1.2.2.2 normalize（math_protection.py。translate_paper側では normalize_math としてimport）
+        入力:
+          - text: 正規化対象の文字列
+        出力: 正規化後のtext
+        処理内容: 数式スパンだけを1.2.2.2.1→1.2.2.2.2に通し、他の
+          本文は変更しない。
+        テスト対象: math_protection.pyの各関数を直接対象としたテストは無い。translate_and_export経由で間接的に実行されるのみ。
+
+        1.2.2.2.1 protect（math_protection.py）
+          入力:
+            - text: 数式を含む可能性のある文字列
+          出力: (プレースホルダ置換後text, 元の数式スパンのリスト)のタプル
+            - プレースホルダ置換後text: $...$/$$...$$を__MATH0__形式で置換した文字列
+            - 元の数式スパンのリスト: インデックスがプレースホルダ番号に対応する、元の数式文字列のリスト
+          処理内容: $...$/$$...$$を1.2.2.2.1.1経由で__MATH0__形式へ置換する。
+          テスト対象: math_protection.pyの各関数を直接対象としたテストは無い。normalize/translate_with_deepl経由で間接的に実行されるのみ。
+
+          1.2.2.2.1.1 _replace（math_protection.py）
+            入力:
+              - match: re.Matchオブジェクト（マッチした数式スパン）
+            出力: プレースホルダ文字列（例:"__MATH0__"）
+            処理内容: protect内部のネスト関数（re.subのコールバック）。
+              1.2.2.2.1.1.1で数式スパンを正規化してからspansに記録する。
+            テスト対象: protect内部のクロージャであり、直接のテストは無い。
+
+            1.2.2.2.1.1.1 _normalize（math_protection.py）
+              入力:
+                - span: 数式スパン文字列
+              出力: \textless/\textgreaterを<>に置換した文字列
+              処理内容: KaTeXが解釈できないMinerU由来のエスケープを置換する。
+              テスト対象: _replace経由で間接的に実行されるのみで、直接のテストは無い。
+
+        1.2.2.2.2 restore（math_protection.py）
+          入力:
+            - text: プレースホルダを含む文字列
+            - spans: protectが返した元の数式スパンのリスト
+          出力: プレースホルダを元の数式スパンへ戻したtext
+          処理内容: 内部のネスト関数_replace（1.2.2.2.1.1とは別の
+            同名ローカル関数）が置換処理を行う。
+          テスト対象: math_protection.pyの各関数を直接対象としたテストは無い。normalize/translate_with_deepl経由で間接的に実行されるのみ。
+
+      1.2.2.3 exclude_references_section（md_tag_parser.py）
+        入力:
+          - units: DocUnitのリスト（書き換え対象）
+        出力: なし（units内の該当unitのtranslatable/ja_textを書き換える）
+        処理内容: 1.2.2.3.1で各unitの章スラッグを求め、"references"
+          なら翻訳対象から除外し原文をja_textにコピーする。
+        テスト対象:
+          - スイートG（翻訳・PDF生成統合／DeepLモック）: test_translate_and_export_excludes_references_sectionで直接検証されている。参考文献セクション（見出し"REFERENCES"＋本文1文）を含む自作Markdownを用意し、翻訳後もその見出し・本文が原文の英語のまま出力PDFに残ることを確認している（2026-08-09追加。それ以前はsample0.pdfに参考文献セクションが無いため、この除外分岐を狙った専用の入力が無く、test_translate_and_export_with_mocked_deeplの中で経由されるだけだった）。
+
+        1.2.2.3.1 _section_slug（md_tag_parser.py）
+          入力:
+            - unit: DocUnit
+          出力: 章スラッグ文字列、またはNone
+          処理内容: タグ文字列から見出し/本文文の章部分を正規表現で取り出す。
+          テスト対象: 直接のテストは無く、exclude_references_section経由で間接的に実行されるのみ。
+
+      1.2.2.4 build_document_context（md_tag_parser.py）
+        入力:
+          - units: DocUnitのリスト
+        出力: ドキュメント全体の文脈文字列（タイトル＋Abstract）
+        処理内容: DeepLのcontext引数に渡す文脈情報を組み立てる。
+        テスト対象:
+          - スイートG（翻訳・PDF生成統合／DeepLモック）: 3テストいずれも、translate_and_export経由で実行され、DeepLへ渡す文脈文字列の組み立てが（モック関数が正しく受け取れる形で）行われることが前提として検証される。
+
+      1.2.2.5 run_translation（translate_paper.py）
+        入力:
+          - units: DocUnitのリスト（書き換え対象）
+          - document_context: build_document_contextが返した文脈文字列
+        出力: なし（units内のja_textを書き換える）
+        処理内容: 環境変数DEEPL_API_KEYを取得し1.2.2.5.1を呼ぶ薄いラッパー。
+        テスト対象:
+          - スイートG（翻訳・PDF生成統合／DeepLモック）: 3テストとも、translate_paper.translate_with_deeplがmonkeypatchされており、run_translationはそのモック関数を呼び出す経路として実行される。
+
+        1.2.2.5.1 translate_with_deepl（deepl_translator.py）
+          入力:
+            - units: DocUnitのリスト（書き換え対象）
+            - api_key: DeepL APIキー（未設定ならNone）
+            - document_context: ドキュメント全体の文脈文字列
+            - log: 進捗メッセージを受け取るコールバック関数（既定はprint）
+          出力: なし（unit.ja_textを書き換える）
+          処理内容: 各文をprotect（→1.2.2.2.1と同一）で数式保護し、
+            直前2〜3文＋文書文脈をDeepL APIのcontext引数に渡して
+            翻訳、結果をrestore（→1.2.2.2.2と同一）で復元しja_textへ
+            設定する。障害はTranslationBackendErrorに正規化。
+          テスト対象:
+            - スイートG（翻訳・PDF生成統合／DeepLモック）: 3テストとも実体はダミー関数に差し替えられているため、DeepL API通信そのものは検証されない。検証されるのは「翻訳結果（ja_text）が正しく後続のPDF生成に反映されるか」という接続部分のみで、test_translate_and_export_translates_all_translatable_unitsはこの接続が翻訳対象文すべてに漏れなく機能しているかまで、test_translate_and_export_excludes_references_sectionは対象外の文には反映されない（原文が保たれる）ことまで確認している。
+
+      1.2.2.6 build_blocks（pdf_renderer.py）
+        入力:
+          - units: DocUnitのリスト
+          - output_dir: 出力先ディレクトリ（画像読み込みに使用）
+        出力: Blockのリスト
+        処理内容: DocUnitを見出し・段落・図表単位のBlockへまとめる。
+        テスト対象:
+          - スイートG（翻訳・PDF生成統合／DeepLモック）: 3テストとも実行され、DocUnit列からBlock列への変換結果が後続のPDF生成に正しく渡ることが、生成PDFの中身を通じて間接的に検証される。
+
+        1.2.2.6.1 _heading_level（pdf_renderer.py）
+          入力:
+            - tag: 見出しのタグ文字列（例:"P1-HEADING-2.1.preliminaries"）
+          出力: 見出しレベル（2〜4のint）
+          処理内容: 章番号のドット区切りの深さから見出しレベルを決める。
+          テスト対象: 見出しレベル計算そのものを直接検証するテストは無く、build_blocks経由で間接的に実行されるのみ。
+
+        1.2.2.6.2 _paragraph_key（pdf_renderer.py）
+          入力:
+            - unit: DocUnit
+          出力: 段落グルーピング用キー文字列
+          処理内容: 同じキーを持つ連続する文を1つのBlockにまとめるために使う。
+          テスト対象: 段落グルーピングそのものを直接検証するテストは無く、build_blocks経由で間接的に実行されるのみ。
+
+        1.2.2.6.3 _image_data_uri（pdf_renderer.py）
+          入力:
+            - output_dir: 出力先ディレクトリ
+            - rel_path: 画像の相対パス
+          出力: 画像のbase64 data URI文字列
+          処理内容: PDF埋め込み用に画像ファイルを読み込みエンコードする。
+          テスト対象: 画像エンコードそのものを直接検証するテストは無く、build_blocks経由で間接的に実行されるのみ。
+
+        1.2.2.6.4 flush（pdf_renderer.py）
+          入力: なし（クロージャでcurrent/current_keyを参照）
+          出力: なし
+          処理内容: build_blocks内部のネスト関数。溜めていた文の並び
+            （current）を1つのparagraph Blockとして確定し、状態を
+            リセットする。
+          テスト対象: build_blocks内部のクロージャであり、直接のテストは無い。
+
+      1.2.2.7 render_all_pdfs（pdf_renderer.py）
+        入力:
+          - blocks: Blockのリスト
+          - output_dir: 出力先ディレクトリ
+          - log: 進捗メッセージを受け取るコールバック関数（既定はprint）
+        出力: 生成されたPDFファイルパスのリスト（対訳版・英語版・日本語版の順）
+        処理内容: HTML組み立て後、Playwright(Chromium)でPDF化する。
+        テスト対象:
+          - スイートG（翻訳・PDF生成統合／DeepLモック）: 3テストとも、対訳版・英語版・日本語版の3つのPDFファイルが実際に生成され、いずれも空ファイルでないことを確認している。
+
+        1.2.2.7.1 render_bilingual_html（pdf_renderer.py）
+          入力:
+            - blocks: Blockのリスト
+          出力: 対訳版HTML文字列
+          処理内容: 各Blockを1.2.2.7.1.1でHTML化し1.2.2.7.3で包む。
+          テスト対象: 対訳版PDF（paper_bilingual.pdf）は「生成され空でないこと」のみが検証されており、対訳版HTMLの内容（英日の対応関係等）を直接検証するテストは無い。
+
+          1.2.2.7.1.1 _render_bilingual_block（pdf_renderer.py）
+            入力:
+              - block: Block
+            出力: そのBlock1つ分のHTML断片
+            処理内容: 英日を左右に並べたtable行を組み立てる。
+            テスト対象: render_bilingual_html経由で間接的に実行されるのみで、内容を直接検証するテストは無い。
+
+            1.2.2.7.1.1.1 _bilingual_row（pdf_renderer.py）
+              入力:
+                - en_html: 英語側のHTML文字列
+                - ja_html: 日本語側のHTML文字列
+                - row_class: 付与するCSSクラス名（省略可）
+              出力: <tr>タグのHTML文字列
+              処理内容: 英日を左右に並べた表の1行を組み立てる。
+              テスト対象: _render_bilingual_block経由で間接的に実行されるのみで、直接のテストは無い。
+
+            1.2.2.7.1.1.2 _esc（pdf_renderer.py）
+              入力:
+                - text: エスケープ対象の文字列
+              出力: HTMLエスケープ済み文字列
+              処理内容: html.escapeのラッパー。
+              テスト対象: HTMLエスケープの正しさを直接検証するテストは無い。
+
+        1.2.2.7.2 render_mono_html（pdf_renderer.py）
+          入力:
+            - blocks: Blockのリスト
+            - lang: "en"|"ja"
+          出力: 単一言語版HTML文字列
+          処理内容: 各Blockを1.2.2.7.2.1でHTML化し1.2.2.7.3で包む。
+          テスト対象:
+            - スイートG（翻訳・PDF生成統合／DeepLモック）: test_translate_and_export_with_mocked_deeplで、lang="ja"のときにpaper_ja.pdfへ実際に日本語文字が書き込まれていることを、test_translate_and_export_translates_all_translatable_unitsで、その日本語文字列が翻訳対象文の数（5）だけちょうど出現することを、test_translate_and_export_excludes_references_sectionで、参考文献セクションの原文（英語）がlang="ja"版にもそのまま残ることを確認しており、日本語版レンダリングの中身がこれまでより踏み込んで検証されている（lang="en"側は空でないことのみの確認）。
+
+          1.2.2.7.2.1 _render_mono_block（pdf_renderer.py）
+            入力:
+              - block: Block
+              - lang: "en"|"ja"
+            出力: そのBlock1つ分のHTML断片
+            処理内容: 1.2.2.7.2.1.1で該当言語のテキストを取り出し
+              h1〜h4/pタグ等に整形する。
+            テスト対象: 個別の要素種別ごとのHTML断片を直接検証するテストは無く、render_mono_html経由で間接的に実行されるのみ。
+
+            1.2.2.7.2.1.1 _sentence_text（pdf_renderer.py）
+              入力:
+                - unit: DocUnit
+                - lang: "en"|"ja"
+              出力: langに応じたen_text/ja_text
+              処理内容: langの値に応じてunitの該当フィールドを返す。
+              テスト対象: _render_mono_block経由で間接的に実行されるのみで、直接のテストは無い。
+
+        1.2.2.7.3 _wrap_html（pdf_renderer.py）
+          入力:
+            - title: HTMLの<title>に使う文字列
+            - body: <body>内に埋め込むHTML文字列
+            - bilingual: 対訳版用CSSを使うかどうか（bool）
+            - lang: <html lang="...">に使う言語コード（既定"ja"）
+          出力: ページ全体のHTML文字列（CSS・KaTeXスクリプト込み）
+          処理内容: 1.2.2.7.3.1で数式描画用アセットを取得し、body
+            部分を<html>で包む。
+          テスト対象: CSS・KaTeXスクリプトを含むページ全体のHTML組み立てを直接検証するテストは無く、render_bilingual_html/render_mono_html経由で間接的に実行されるのみ。
+
+          1.2.2.7.3.1 load_katex_assets（katex_assets.py）
+            入力: なし
+            出力: (インライン化済みCSS, katex.min.jsの中身, auto-render.min.jsの中身)のタプル
+              - インライン化済みCSS: フォントをbase64 data URI化したKaTeX用CSS
+              - katex.min.jsの中身: KaTeX本体のJavaScriptソース文字列
+              - auto-render.min.jsの中身: 自動数式検出・描画拡張のJavaScriptソース文字列
+            処理内容: vendor/katex/を読み込みlru_cacheで1回だけ実行、
+              1.2.2.7.3.1.1でフォント埋め込みする。
+            テスト対象: KaTeXアセットの読み込み結果を直接検証するテストは無く、_wrap_html経由で間接的に実行されるのみ（数式を含まないsample0.pdfの範囲でテストが行われているため、実際の数式描画結果は目視確認以外で検証されていない）。
+
+            1.2.2.7.3.1.1 _inline_css（katex_assets.py）
+              入力:
+                - css: 元のKaTeX CSS文字列
+                - fonts_dir: フォントファイル（.woff2）が置かれたディレクトリ
+              出力: フォントをdata URI化したCSS文字列
+              処理内容: @font-faceブロックごとに1.2.2.7.3.1.1.1を適用する。
+              テスト対象: load_katex_assets経由で間接的に実行されるのみで、直接のテストは無い。
+
+              1.2.2.7.3.1.1.1 _inline_block（katex_assets.py）
+                入力:
+                  - match: re.Matchオブジェクト（マッチした@font-faceブロック）
+                出力: フォントをdata URI化した@font-faceブロック文字列
+                処理内容: _inline_css内部のネスト関数（re.subのコールバック）。
+                テスト対象: _inline_css経由で間接的に実行されるのみで、直接のテストは無い。
+
+  1.3 _log（translate_paper.py）
+    入力:
+      - message: 出力するメッセージ文字列
+    出力: なし
+    処理内容: print(message, flush=True)のラッパー。1.2 run_pipeline・
+      1.2.2 translate_and_export・1.2.2.5 run_translationから進捗
+      表示のため直接呼ばれるほか、1.2.2.5.1 translate_with_deeplと
+      1.2.2.7 render_all_pdfsにはlogコールバックとして渡され、内部の
+      進捗メッセージ出力にも使われる。
+    テスト対象: ログ出力そのものを検証するテストは無い（print文の副作用は通常テスト対象としない）。
+
+
+======================================================================
+ 第2部: なぜファイル単位でこう分類されているのか
+ （第1部に登場する関数が、なぜそのスクリプトファイルに実装されて
+ いるのかを、第1部の番号を参照しながら説明する）
+======================================================================
+
+----------------------------------------------------------------------
+[0] translate_paper.py … 全体の司令塔（エントリポイント）
+----------------------------------------------------------------------
+  含まれる関数（第1部の番号）:
+    1 main / 1.0 _require_pdf_exists / 1.1 resolve_page_range /
+    1.2 run_pipeline / 1.2.2 translate_and_export /
+    1.2.2.5 run_translation / 1.3 _log
+
+  なぜこのファイルにまとまっているか:
+    「CLI引数を受け取ってからパイプライン全体を起動するまで」という
+    唯一のエントリポイントとしての責務を1ファイルに集約している。
+    1(main)がargparseを解釈し、1.0で入力PDFの存在を確認し、1.1で
+    ページ範囲を確定した上で、1.2(run_pipeline)が他ファイルの
+    process_pdf（[2]、1.2.1）とtranslate_and_export（1.2.2）を順に
+    呼ぶ。1.2.2自身がこのファイルにあるのは、「既存のMarkdownから
+    翻訳・PDF生成だけをやり直す」という再利用可能な入口を、mainと
+    同じ場所でユーザー（および1.2.2だけを直接呼びたいテスト）に
+    提供したいためである（explain.txt [0]相当の旧「補足」参照）。
+
+  誰が呼ぶか: ユーザーがコマンドラインから直接実行する。
+
+
+----------------------------------------------------------------------
+[1] pdf_page_label_resolver.py / pdf_chapter_resolver.py … ページ範囲の解決
+----------------------------------------------------------------------
+  含まれる関数（第1部の番号）:
+    1.1.1 resolve_physical_page_range / 1.1.1.1 resolve_physical_page
+    （pdf_page_label_resolver.py）
+    1.1.2 resolve_chapter_page_range / 1.1.2.1 parse_chapter_spec /
+    1.1.2.2 _is_body_page / 1.1.2.3 _end_page_for
+    （pdf_chapter_resolver.py）
+
+  なぜこのファイルにまとまっているか:
+    どちらも「--chapter/--start-label/--end-label という、物理ページ
+    番号以外の指定方法を、process_pdfが要求する物理ページ番号へ変換
+    する」という同じ種類の責務を持つが、扱うPDFメタデータが異なる
+    （page_label系はfitzのPage.get_label()、chapter_resolver系は
+    fitzのget_toc()）ため2ファイルに分けている。ただし1.1.2.2
+    （_is_body_page）はget_label()も使っており、章の前付け判定の
+    ためにpage_label側の知識を一部chapter_resolver側が取り込んで
+    いる、という結合がある。sample3.pdfのような大型書籍を全ページ
+    処理するとDeepLのAPIコストと処理時間が膨らむため、範囲を絞り
+    込む機能としてtranslate_paper.py（[0]）から独立させてある。
+
+  誰が呼ぶか: translate_paper.py（1.1 resolve_page_rangeの中）。
+
+
+----------------------------------------------------------------------
+[2] pdf_processor.py … PDF解析パイプラインのオーケストレーター
+----------------------------------------------------------------------
+  含まれる関数（第1部の番号）:
+    1.2.1 process_pdf
+
+  なぜこのファイルにまとまっているか:
+    process_pdf自身はロジックを持たず、[3][4][6][7]の4ファイルが
+    担うStep1〜4を順番に呼ぶだけの「薄いオーケストレーター」に
+    徹するという、単一の責務のためにこのファイルが存在する。各
+    ステップはpdf_models.pyが定義する型だけを介してやり取りする
+    ため、単体で差し替え・テストが可能になっている（1.2.1.1〜
+    1.2.1.4の各ステップの詳細は、それぞれの担当ファイル[3][4][6]
+    [7]を参照）。
+
+  誰が呼ぶか: translate_paper.py（1.2.1）。単体でもCLI実行可能。
+
+
+----------------------------------------------------------------------
+[3] pdf_mineru_runner.py … Step1: MinerU実行
+----------------------------------------------------------------------
+  含まれる関数（第1部の番号）:
+    1.2.1.1 run_mineru
+
+  なぜこのファイルにまとまっているか:
+    「PDFをMinerU（レイアウト検出・OCR・数式認識・表認識）に通し、
+    生の構造化JSON（content_list）と画像群を得る」という、意味解釈
+    を一切含まない生データ取得だけに責務を限定している。失敗時に
+    MinerURunErrorで明確に停止するのも、後続ステップ（[4]）に渡す
+    生データが無い以上、フォールバックせず即座に呼び出し元へ伝える
+    べきだからである。
+
+
+----------------------------------------------------------------------
+[4] pdf_structure_analyzer.py … Step2: 構造解析
+----------------------------------------------------------------------
+  含まれる関数（第1部の番号）:
+    1.2.1.2 analyze_structure / 1.2.1.2.1 _build_pages /
+    1.2.1.2.1.1 _PageBuilder.__init__ / 1.2.1.2.1.2 _handle_list_item /
+    1.2.1.2.1.3 _handle_image_or_table_item /
+    1.2.1.2.1.4 _handle_equation_item / 1.2.1.2.1.5 _handle_text_item /
+    _PageBuilder.has_heading（1.2.1.2.1.5の子） /
+    1.2.1.2.1.6 _handle_unknown_item /
+    1.2.1.2.1.6.1 _extract_raw_text / 1.2.1.2.2 _assign_sentence_ids /
+    1.2.1.2.3 _collect_translation_units
+
+  なぜこのファイルにまとまっているか:
+    [3]が取得した生JSONを、「翻訳対象の本文テキスト」と「非翻訳要素
+    （数式・図表・見出し等）」に分類し、本ツール独自のID体系
+    （例: [P1-S1-abstract-S2]）を付与するという1つの責務に、パイプ
+    ライン中もっとも複雑なロジック（前付け判定・見出し判定・図表
+    キャプション分離・数式番号抽出・合成章ID割り当て）が集約されて
+    いる。未知の要素や解析失敗はUnknownElementにフォールバックし、
+    ドキュメント全体の処理を止めない設計方針も、この1ファイルの
+    中で一貫して守られている。文字列処理の実体は[5]（pdf_text_
+    utils.py）に切り出されており、このファイル自身は「PDFの構造を
+    どう解釈するか」という判断だけに専念する。
+
+  誰が呼ぶか: pdf_processor.py（[2]、process_pdfのStep2）。
+
+
+----------------------------------------------------------------------
+[5] pdf_text_utils.py … 文字列処理ユーティリティ
+----------------------------------------------------------------------
+  含まれる関数（第1部の番号）:
+    1.2.1.2.1.2.1 restore_merged_hyphens / 1.2.1.2.1.2.1.1 repl /
+    1.2.1.2.1.2.1.1.1 split_merged_compound /
+    1.2.1.2.1.2.1.1.1.1 is_known_word /
+    parse_caption_label（1.2.1.2.1.3の子） /
+    split_sentences（1.2.1.2.1.3/1.2.1.2.1.5の子） /
+    slugify_section_name（1.2.1.2.1.5の子）
+
+    （HEADING_RE・CAPTION_RE・EQUATION_TAG_REの3正規表現も同居する
+    が、第1部では関数として個別番号を振っていない）
+
+  なぜこのファイルにまとまっているか:
+    「文分割」「改行ハイフンの復元（de- + tection→detection）」
+    「見出し・キャプションの構造判定」という、PDFやMinerUの出力
+    形式に関する知識を一切持たない純粋な文字列変換だけをここに
+    切り出している。[4]（pdf_structure_analyzer.py）から呼ばれる
+    側であり、他のどのパイプラインモジュールにも依存しない「末端
+    ユーティリティ」として設計されているため、単体テスト（スイート
+    Cが該当）がPDF処理を一切介さずに完結できる。
+
+  補足（後方互換エイリアス）: pdf_processor.py（[2]）は
+  split_sentences / HEADING_RE / slugify_section_name（別名
+  _slugify_section_name）/ parse_caption_label（別名
+  _parse_caption_label）をこのファイルからre-exportしている。これは
+  「pdf_processor.foo」の形で直接参照している既存コード
+  （test_translator.py 等）が、実体をpdf_text_utils.pyへ移した後も
+  動き続けるようにするための措置。
+
+
+----------------------------------------------------------------------
+[6] pdf_translator.py … Step3: 翻訳実行（現状は素通し）
+----------------------------------------------------------------------
+  含まれる関数（第1部の番号）:
+    1.2.1.3 translate_units / 1.2.1.3.1 identity_translator
+
+  なぜこのファイルにまとまっているか:
+    「[4]が抽出した本文テキストを翻訳する」という処理点を、実際の
+    翻訳ロジックとは独立させておくためだけに存在する薄いファイル。
+    実際のDeepL翻訳（[11] deepl_translator.py）はこの時点では行わ
+    れず、既定では素通し（恒等関数）にしてある。実翻訳は後段の
+    translate_paper.py（[0]）→ deepl_translator.py（[11]）が、
+    タグ付きMarkdown生成後にまとめて行う（DeepLの文脈パラメータを
+    使うため、ページ単位ではなく文書全体を見てから翻訳したいという
+    理由による分離）。
+
+
+----------------------------------------------------------------------
+[7] pdf_document_builder.py … Step4: 成果物結合
+----------------------------------------------------------------------
+  含まれる関数（第1部の番号）:
+    1.2.1.4 build_document / 1.2.1.4.1 _render_page_markdown /
+    1.2.1.4.1.1 _save_element_image / 1.2.1.4.1.1.1 _figure_label /
+    1.2.1.4.1.2 _translated_sentences
+
+  なぜこのファイルにまとまっているか:
+    [4]の構造情報と[6]の翻訳結果（この時点ではほぼ原文）を組み合わ
+    せ、ページ別タグ付きMarkdown（page_XX_en.md）と画像
+    （output/images/*.png）を書き出す、という「最終出力の組み立て」
+    だけに責務を限定している。
+
+
+----------------------------------------------------------------------
+[8] pdf_models.py / translation_models.py … 共有データ構造（受け身）
+----------------------------------------------------------------------
+  含まれる関数（第1部の番号）:
+    なし（TextBlockElement, FigureElement, StructuredDocument,
+    DocUnit, Block等のデータクラス定義のみで、呼び出される関数を
+    持たない）
+
+  なぜこのファイルにまとまっているか:
+    ロジックを一切持たず、ステップ間で受け渡す「データの形」だけを
+    定義する2ファイル（pdf_models.pyはPDF解析側、translation_
+    models.pyは翻訳・PDF生成側）。各ステップの結合を「具体的な関数」
+    ではなく「型」に対して行うことで、ステップ単体の差し替え・
+    テストを可能にするために、あえてロジックを持つファイルから
+    分離してある。
+
+  誰が呼ぶか: 上記すべてのパイプラインモジュールがimportして使う。
+
+
+----------------------------------------------------------------------
+[9] md_tag_parser.py … タグ付きMarkdownの解析
+----------------------------------------------------------------------
+  含まれる関数（第1部の番号）:
+    1.2.2.1 parse_output_dir / 1.2.2.1.1 _page_number /
+    1.2.2.1.2 parse_page_file / 1.2.2.1.2.1 _classify /
+    1.2.2.3 exclude_references_section / 1.2.2.3.1 _section_slug /
+    1.2.2.4 build_document_context
+
+  なぜこのファイルにまとまっているか:
+    「pdf_processor.py（[2]）が出力した`[P1-S2-...] text`形式の行を、
+    タグと本文に分離し、DocUnitの順序付きリストへ変換する」という、
+    タグ付きMarkdownを読む側の専門知識を1ファイルに集約している。
+    以降の翻訳・PDF生成ステップ（1.2.2以下）が、タグの「種別」だけ
+    を見て分岐できるようにする役割も、同じ理由でここに置かれている
+    （参考文献セクションの除外、DeepL文脈の組み立ても同様）。
+
+  誰が呼ぶか: translate_paper.py（1.2.2.1・1.2.2.3・1.2.2.4）、
+              および test_translator.py（テストから直接）。
+
+
+----------------------------------------------------------------------
+[10] math_protection.py … 数式保護
+----------------------------------------------------------------------
+  含まれる関数（第1部の番号）:
+    1.2.2.2 normalize / 1.2.2.2.1 protect / 1.2.2.2.1.1 _replace /
+    1.2.2.2.1.1.1 _normalize / 1.2.2.2.2 restore
+
+  なぜこのファイルにまとまっているか:
+    「DeepLに生のLaTeXを渡すと誤訳・破損する恐れがあるため、翻訳
+    リクエスト前に数式スパンをプレースホルダへ置換し、翻訳結果に
+    対して元の数式へ復元する」という、翻訳エンジンから数式を守る
+    という1つの責務だけに特化している。[11]（deepl_translator.py）
+    と[0]（translate_paper.py）の両方から呼ばれる（1.2.2.2は
+    translate_and_export内、1.2.2.5.1のprotect/restoreはtranslate_
+    with_deepl内）横断的なユーティリティのため、どちらのファイルに
+    も属さない独立モジュールにしてある。
+
+
+----------------------------------------------------------------------
+[11] deepl_translator.py … 実際の翻訳実行
+----------------------------------------------------------------------
+  含まれる関数（第1部の番号）:
+    1.2.2.5.1 translate_with_deepl
+
+  なぜこのファイルにまとまっているか:
+    DeepL APIとの実際の通信という1つの責務に特化している。各文の
+    翻訳リクエストには「文書全体の文脈（タイトル＋Abstract）」と
+    「直前2〜3文の原文」をcontextパラメータとして渡し、代名詞や
+    専門用語の訳ブレを抑える設計になっている。APIキー未設定・文字数
+    上限到達・通信エラー等はすべてTranslationBackendErrorに正規化し、
+    呼び出し元（[0]）がそれをSystemExitとしてユーザーに報告して
+    処理を止める（CLAUDE.mdの「翻訳エンジンはDeepL固定」という要件
+    をここで担保している）。
+
+  誰が呼ぶか: translate_paper.py（1.2.2.5 run_translation経由）。
+
+
+----------------------------------------------------------------------
+[12] pdf_renderer.py / katex_assets.py … PDF生成
+----------------------------------------------------------------------
+  含まれる関数（第1部の番号）:
+    1.2.2.6 build_blocks / 1.2.2.6.1〜1.2.2.6.4 /
+    1.2.2.7 render_all_pdfs / 1.2.2.7.1〜1.2.2.7.3
+    （pdf_renderer.py）
+    1.2.2.7.3.1 load_katex_assets / 1.2.2.7.3.1.1 _inline_css /
+    1.2.2.7.3.1.1.1 _inline_block（katex_assets.py）
+
+  なぜこのファイルにまとまっているか:
+    「HTML/CSS経由のPDFレンダリング」という1つの責務にpdf_
+    renderer.pyを特化させ、そのうち「KaTeXアセットの読み込み・
+    フォントのbase64埋め込み」という数式描画専用の詳細だけを
+    katex_assets.pyへさらに分離している（CDNへアクセスせずオフ
+    ラインで完結させるための自己完結型CSS組み立てという、独立性の
+    高い処理のため）。翻訳済みDocUnitの列を見出し・段落・図表と
+    いった表示単位（Block）にまとめ直すbuild_blocksから、実際に
+    Playwright（Chromium）でPDF化するrender_all_pdfsまでを、この
+    2ファイルに閉じ込めている。
+
+  誰が呼ぶか: translate_paper.py（1.2.2.6・1.2.2.7）。
+
+
+----------------------------------------------------------------------
+[13] test_translator.py … 自動テスト
+----------------------------------------------------------------------
+  含まれる関数（第1部の番号）: なし。test_translator.py自身は第1部
+  の呼び出し構造の外側（main()から呼ばれる側ではなく、pytestから
+  上記の関数群を直接呼び出す側）に位置する。
+
+  なぜこのファイルにまとまっているか:
+    上記の主要パイプライン関数を、軽量サンプル（input/sample0.pdf
+    等）を使って直接呼び出し、解析結果やページ範囲解決が仕様通り
+    かを検証する、開発者向けの自動テストという1つの責務に特化して
+    いる。CLAUDE.mdの運用規定により、DeepL呼び出し自体はモック化
+    され、有料APIキーを消費しないようになっている（課金対象の
+    deepl_translator.translate_with_deepl（1.2.2.5.1）は実際には
+    呼ばれず、テスト用のダミー関数に差し替えられる）。各テスト
+    スイート（A〜J）の詳細はtestExplain.txtを参照。
+
+  誰が呼ぶか: 開発者（pytestコマンド、またはClaude Codeの自律修正
+              ループ）。
+
+
+■ 呼び出し関係の依存の向き（誰が誰に依存しているか、まとめ）
+
+  translate_paper.py
+     ├─> pdf_chapter_resolver.py ─> fitz(PyMuPDF)
+     ├─> pdf_page_label_resolver.py ─> fitz(PyMuPDF)
+     ├─> pdf_processor.py
+     │      ├─> pdf_mineru_runner.py ─> MinerU(外部プロセス)
+     │      ├─> pdf_structure_analyzer.py ─> pdf_text_utils.py ─> spellchecker(外部)
+     │      ├─> pdf_translator.py（現状は素通しのみ）
+     │      └─> pdf_document_builder.py ─> PIL(画像保存)
+     │      （上記すべてが pdf_models.py の型でデータをやり取り）
+     ├─> md_tag_parser.py ─> translation_models.py
+     ├─> deepl_translator.py
+     │      ├─> math_protection.py
+     │      └─> deepl(外部ライブラリ) ─> DeepL API(外部サービス)
+     └─> pdf_renderer.py
+            ├─> katex_assets.py ─> vendor/katex/(同梱アセット)
+            └─> playwright(外部ライブラリ) ─> Chromium(外部プロセス)
+
+  ※ pdf_text_utils.py と pdf_models.py / translation_models.py は
+    他のどのパイプラインモジュールにも依存しない「末端」モジュール
+    （依存されるだけで、何も呼び出さない）。
+
+
+■ なぜこの構成になっているか（設計意図のまとめ）
+
+  1. 「解析（MinerU起点）」と「翻訳・PDF生成（DeepL/Playwright起点）」を
+     completely 分離し、間を「タグ付きMarkdown」というテキスト形式の
+     成果物で受け渡す設計になっている。これにより、
+       - 一度Markdownまで生成すれば、DeepL APIキーの問題やPDF
+         レンダリングの調整だけを translate_and_export() で
+         やり直せる（MinerUの重い解析を再実行せずに済む）。
+       - 各層をpytestで個別にテストしやすい。
+  2. PDF解析自体も4ステップ（MinerU実行／構造解析／翻訳／結合）に
+     分解されており、それぞれが pdf_models.py の型のみに依存する
+     ことで、将来的にMinerU以外の解析エンジンや別の翻訳エンジンに
+     差し替える場合も、影響範囲を該当ステップ内に閉じ込められる
+     ようになっている。
+  3. 数式（math_protection.py, katex_assets.py）や参考文献
+     （md_tag_parser.py の exclude_references_section）など、
+     「翻訳してはいけない／翻訳が壊れやすい」要素の保護ロジックを
+     専用モジュールとして切り出し、本流のパイプラインコードを
+     汚さないようにしている。

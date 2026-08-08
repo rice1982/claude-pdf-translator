@@ -150,6 +150,22 @@ def resolve_page_range(
     return None, None
 
 
+def _require_pdf_exists(pdf_path: str | Path) -> None:
+    """入力PDFファイルが実在するかを確認する。
+
+    resolve_page_range/run_pipeline内部（fitzでのPDF読み込み等）は
+    存在しないパスに対して生の例外（FileNotFoundError等）を送出するが、
+    他の入力エラー（章指定・印刷ページラベルの解決失敗等）と同様に、
+    分かりやすい日本語メッセージでSystemExitとして終了させるための
+    事前チェック。
+
+    Raises:
+        SystemExit: pdf_pathが存在しない、またはファイルでない場合。
+    """
+    if not Path(pdf_path).is_file():
+        raise SystemExit(f"入力PDFファイルが見つかりません: {pdf_path}")
+
+
 def main() -> None:
     if sys.stdout.encoding is None or sys.stdout.encoding.lower() != "utf-8":
         sys.stdout.reconfigure(encoding="utf-8")
@@ -174,6 +190,7 @@ def main() -> None:
         help="処理対象の終了ページを印刷ページラベルで指定（両端含む。例: --end-label xviii / --end-label 41）",
     )
     args = parser.parse_args()
+    _require_pdf_exists(args.pdf_path)
 
     try:
         start_page, end_page = resolve_page_range(
