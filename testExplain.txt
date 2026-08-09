@@ -19,6 +19,24 @@ sample0.pdfに限りDeepLを実課金でモック化せず呼び出す例外がC
 分類できる（うちAは対応する自動テストが0件で、人間による確認が必須の
 スイート）。
 
+前提（サンプルPDFについて）: スイートB・D・E・F・G・H・I・J・Kの多くは
+`input/sample0.pdf`〜`sample3.pdf`という特定のサンプルPDFを前提に
+書かれている（どのスイートがどのファイルを使うかは、各スイートの
+「該当関数」欄、および本ファイル末尾近くの「■ まとめ表」を参照）。
+これらのサンプルPDFは著作権の都合上、本リポジトリには含まれていない
+（README.mdの「4-3. テスト（pytest）の実行について」参照）。対象PDFが
+存在しない場合の挙動はテストによって異なる。
+  - `processed`/`processed_sample1`/`processed_sample2` fixtureを使う
+    テスト（スイートB・D・G・K）、および個別に存在チェックを持つ
+    テスト（例: スイートFのtest_unnumbered_headings_in_real_book_pdf）
+    は`pytest.skip`で穏やかにスキップされる。
+  - 存在チェックを持たず、`resolve_physical_page`/`resolve_chapter_
+    page_range`等を直接呼ぶテスト（スイートEのtest_resolve_chapter_
+    page_range_with_real_toc、スイートHの大半のテスト等）は、PDFが
+    無いとfitz等が送出する生の例外でエラー終了する（スキップされない）。
+  - スイートC・I・J、およびスイートEのparse_chapter_spec系はPDFを
+    使わないため、この制約を受けない。
+
 
 ■ 検証カテゴリについて（期待値の信頼性の指標）
 
