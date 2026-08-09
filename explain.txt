@@ -20,9 +20,9 @@
 
   - 番号は呼び出し順（親の直下の子は「親番号.連番」）。番号が深い
     ほどネストした（より内側から）呼び出しであることを示す。
-  - 「1.0」は例外的な表記。「main()内で1.1（resolve_page_range）
-    より前に呼ばれる」という意味で、1.1以下が既に確定した番号体系の
-    ため、後から追加した関数をこの形で挿入している。
+  - 「X.0」は例外的な表記。既に確定した番号体系の中に、実際には
+    それより前に呼ばれる関数を後から挿入する必要が生じた場合に使う
+    （例:「main()内で1.1（resolve_page_range）より前に呼ばれる」）。
   - 各関数のブロックは必ず「入力」「出力」「処理内容」「テスト対象」
     の4項目を持つ。引数・戻り値が複数ある場合は箇条書きでそれぞれの
     意味を記す。「テスト対象: なし」は、専用の直接テストが無く、
@@ -233,20 +233,19 @@
           処理内容: 要素種別ごとに以下の_handle_*へ振り分ける。1要素の
             失敗は_handle_unknown_itemへフォールバックする。
 
-            既知の仕様（段落がページをまたぐ場合の割り当て、
-            2026-08-09確認）: 各itemは`item.get("page_idx", 0)`の値で
-            単純に`builders.setdefault(page_idx, ...)`へ振り分けられる
-            だけで、1つのitem（段落等）を物理ページ境界で分割し直す
-            処理は行わない。MinerU自身が「原本PDF上では物理ページを
-            またいで印字されている段落」を1つの連続したtext item として
-            まとめ、そのitem全体に開始側の物理ページのpage_idxを
-            割り当てることがあるため（例: sample0.pdfの"(1)...(2)...
-            (3)..."という列挙は、(1)が物理1ページ目、(2)(3)が物理2
-            ページ目の印字だが、MinerUは1つのtext item・page_idx=0
-            としてまとめる）、結果として段落全体が開始ページ側の
-            Markdownに収まる。この項目の分割・再配置はMinerU側の
-            責務であり、本ツールはMinerUのpage_idx割り当てをそのまま
-            信頼する設計。
+            既知の仕様（段落がページをまたぐ場合の割り当て）:
+            各itemは`item.get("page_idx", 0)`の値で単純に
+            `builders.setdefault(page_idx, ...)`へ振り分けられるだけで、
+            1つのitem（段落等）を物理ページ境界で分割し直す処理は
+            行わない。MinerU自身が「原本PDF上では物理ページをまたいで
+            印字されている段落」を1つの連続したtext item としてまとめ、
+            そのitem全体に開始側の物理ページのpage_idxを割り当てる
+            ことがあるため（例: sample0.pdfの"(1)...(2)...(3)..."と
+            いう列挙は、(1)が物理1ページ目、(2)(3)が物理2ページ目の
+            印字だが、MinerUは1つのtext item・page_idx=0としてまとめる）、
+            結果として段落全体が開始ページ側のMarkdownに収まる。
+            この項目の分割・再配置はMinerU側の責務であり、本ツールは
+            MinerUのpage_idx割り当てをそのまま信頼する設計。
           テスト対象:
             - スイートB（PDF解析パイプライン基本検証）: test_header_and_footer_noise_excludedで、arXiv IDなどの_NOISE_TYPES要素が出力から除外されることを、test_cross_page_paragraph_is_kept_on_starting_pageで、MinerUのpage_idxに基づくページ単位のグルーピングが正しく行われることを確認している。
 
@@ -266,9 +265,63 @@
               - item: MinerUのcontent_list要素1件（辞書、list_itemsを持つ）
               - builder: 処理中ページの状態を保持する_PageBuilder
             出力: なし（builder.elementsへTextBlockElementを追記）
-            処理内容: 箇条書き・参考文献リストの各項目を1.2.1.2.1.2.1
-              で整形しTextBlockElementとして追加する。
+            処理内容: 箇条書き・参考文献リストの各項目を1.2.1.2.1.2.0・
+              1.2.1.2.1.2.1で整形しTextBlockElementとして追加する。
             テスト対象: 箇条書き・参考文献リストの処理に特化したテストは無く、process_pdf実行時に間接的に実行されるのみ。
+
+            1.2.1.2.1.2.0 wrap_bare_greek_letters（pdf_text_utils.py。
+                restore_merged_hyphens（1.2.1.2.1.2.1）より前に呼ばれる
+                ため、番号体系を崩さず挿入する「X.0」表記に倣う）
+              入力:
+                - text: 変換対象の文字列（MinerUのtext_levelなし本文やキャプション等）
+              出力: ギリシャ文字をTeXコマンド形式で$...$に包んだ後の文字列
+                （数式スパン部分は元のまま）
+              処理内容: $...$の数式部分を避けつつ（restore_merged_hyphensと
+                同じ_INLINE_MATH_REによるスキップ方式）、本文中に単独で
+                現れるギリシャ文字（α-ω, Α-Ω）を検出し、_GREEK_TO_TEX_
+                COMMAND（vendor/katex/katex.min.jsの記号定義から抽出した
+                対応表。例:"γ"→"gamma"）でTeXコマンド形式に変換した上で
+                $...$に包む（例:"scale γ"→"scale $\gamma$"）。地の文に
+                ギリシャ文字が実在の英単語として使われることは無いため、
+                半角英数字1文字（"x"や"K"等）とは異なり自動保護しても
+                誤爆リスクが低いと判断できる。MinerUが数式として検出
+                しなかった"scale γ"（sample0.pdf page_02、P2-FIG1-
+                CAPTION-S3）のような漏れを、翻訳前の構造解析段階で
+                プレースホルダ保護できるようにする（math_protection.py
+                のprotect/restoreは翻訳直前に呼ばれるため、この時点で
+                $...$に入っていれば自動的に保護対象になる）。
+
+                なぜ生の文字ではなくTeXコマンド形式に変換するか:
+                vendor/katex/katex.min.js（KaTeX 0.16.11）を調査した
+                ところ、"se(...,"γ","\\gamma",...)"のように、
+                KaTeXは生のUnicodeギリシャ文字を対応するTeXコマンドの
+                エイリアスとして内部登録しており、描画結果は生の文字
+                でも\gammaコマンドでも等価になることを確認している
+                （つまり動作上はどちらでも問題ない）。それでも、MinerU
+                由来の他の数式スパンが全てTeXコマンド形式であることと
+                の表記の一貫性のため、明示的にコマンド形式へ変換する。
+                ラテン文字と同形の一部の大文字ギリシャ文字（Α,Β,Ε,Ζ,
+                Η,Ι,Κ,Μ,Ν,Ο,Ρ,Τ,Χ）はKaTeXに専用コマンドが無いため、
+                _GREEK_TO_TEX_COMMANDに含めず、変換せず元の文字のまま
+                $...$で囲む仕様とした。
+              テスト対象:
+                - スイートC（文字列処理ユーティリティ単体テスト）:
+                  test_wrap_bare_greek_lettersで、単独ギリシャ文字が
+                  TeXコマンド形式で$...$に包まれること・複数文字が1つの
+                  スパンとして連結されたコマンド列に変換されること・
+                  既存の$...$保護済みスパン内は二重に変換・ラップされ
+                  ないこと・ギリシャ文字が無ければ変化しないこと・
+                  専用コマンドの無い大文字（"Α"等）は変換されず元の文字
+                  のまま$...$に包まれることを直接検証している（5ケース）。
+                - スイートB（PDF解析パイプライン基本検証）:
+                  test_math_protection_round_trips_all_real_inline_math
+                  が、sample0.pdf page_02_en.mdの数式スパン数（25個。
+                  本関数による"scale γ"の保護を含む）を間接的に検証
+                  している。
+                - スイートK（DeepL実課金統合テスト）: "$\gamma$"が
+                  math_protection.protectで保護されるため、
+                  find_untranslated_fragment_candidatesの検出対象に
+                  ならないことを間接的に確認している。
 
             1.2.1.2.1.2.1 restore_merged_hyphens（pdf_text_utils.py）
               入力:
@@ -312,30 +365,30 @@
               - builder: 処理中ページの状態を保持する_PageBuilder
             出力: なし（builder.elementsへFigureElement/CaptionElementを追記）
             処理内容: 図・表・チャートをFigureElement/CaptionElementと
-              して追加する。restore_merged_hyphens（→1.2.1.2.1.2.1と
+              して追加する。wrap_bare_greek_letters（→1.2.1.2.1.2.0と
+              同一）・restore_merged_hyphens（→1.2.1.2.1.2.1と
               同一）・parse_caption_label・split_sentencesを呼ぶ。
 
-              既知の制限（表脚注の扱い、2026-08-09確認）: MinerUの
-              content_listには本来、表下の脚注（例:"*Our own
-              implementation of GED, as no official code was
-              released."）用に`table_footnote`という別フィールドが
-              用意されているが、実際にはこのフィールドが空のまま、
-              脚注テキストが`table_caption`側にキャプション文と並べて
-              返ってくることがある（MinerU側の分類の揺れであり、この
-              プロジェクトの実行方法に起因するものではない。より高精度な
-              `--backend hybrid-engine`/`vlm-engine`も試したが、この
-              実行環境ではGPUメモリがほぼ無く、1ページの解析だけで
-              30分以上かかり実用不可だったため、`pipeline`バックエンドを
-              維持している）。`table_caption`配列にFig./Tableラベルを
-              持つ要素とラベルを持たない要素が混在する場合、本関数は
-              ラベルを持たない要素を直前のラベル付きキャプションへの
-              継続文として結合する（`caption_groups`によるグルーピング）。
-              結果として表の脚注は独立したタグにはならず、当該表の
-              `CAPTION-S{k}`の続き文として出力される。内容が失われる
-              ことは無いが、「キャプション」と「脚注」という意味的な
-              区別は付かない。座標情報（表の上下どちらにあったか）が
-              MinerU出力のキャプション文字列単位では得られないため、
-              確実な自動判別はできない。
+              既知の制限（表脚注の扱い）: MinerUのcontent_listには本来、
+              表下の脚注（例:"*Our own implementation of GED, as no
+              official code was released."）用に`table_footnote`という
+              別フィールドが用意されているが、実際にはこのフィールドが
+              空のまま、脚注テキストが`table_caption`側にキャプション
+              文と並べて返ってくることがある（MinerU側の分類の揺れで
+              あり、このプロジェクトの実行方法に起因するものではない。
+              より高精度な`--backend hybrid-engine`/`vlm-engine`も
+              検討したが、この実行環境ではGPUメモリがほぼ無く、1ページ
+              の解析だけで30分以上かかり実用不可だったため、`pipeline`
+              バックエンドを維持している）。`table_caption`配列に
+              Fig./Tableラベルを持つ要素とラベルを持たない要素が混在
+              する場合、本関数はラベルを持たない要素を直前のラベル付き
+              キャプションへの継続文として結合する（`caption_groups`
+              によるグルーピング）。結果として表の脚注は独立したタグ
+              にはならず、当該表の`CAPTION-S{k}`の続き文として出力
+              される。内容が失われることは無いが、「キャプション」と
+              「脚注」という意味的な区別は付かない。座標情報（表の
+              上下どちらにあったか）がMinerU出力のキャプション文字列
+              単位では得られないため、確実な自動判別はできない。
             テスト対象:
               - スイートB（PDF解析パイプライン基本検証）: test_figure_caption_is_separated_from_body_text・test_images_are_extracted_as_png・test_figure_reference_is_placed_in_page2_markdownで、図のFigureElement/CaptionElement分離・番号付与・キャプション文分割が正しく行われることを確認している。
               - スイートD（表キャプション・表画像抽出）: test_table_captions_sample1/2で、表についても同様のTABLEラベル・キャプション分割が正しく行われることを確認している。
@@ -357,21 +410,21 @@
                 処理内容: 略語（Fig., Sec., e.g.等）直後での誤分割を
                   回避しながら文分割する。
 
-                既知の制限（"Table N."形式のキャプション分割、
-                2026-08-09確認）: `_ABBREVIATIONS`（略語リスト）には
-                "fig."/"sec."等はあるが"tab."/"table."は含まれない
-                ため、"Tab. 1 summarizes..."のような本文中の参照は
-                "Tab."の直後で文分割される。さらに"Table 1.
-                Correspondences..."のようなピリオド区切りのキャプション
-                （例: sample2.pdf表1・表2）は、分割位置が"Table"の直後では
-                なく数字"1."の直後になるため、略語リストに"table."を
-                追加しても分割は防げない（"1."は略語ではなく数字な
-                ので、いずれにせよ非分割の判定対象にならない）。この
-                ため"Table 1."が単独の1文（CAPTION-S1）、続く説明文が
-                別の1文（CAPTION-S2）になる。安全に直すにはキャプション
-                処理専用の結合ロジックが別途必要だが、内容は失われず
-                （両方の文がそのまま翻訳対象になる）、生成PDF上でも
-                問題が無いことを確認済みのため、対応は見送っている。
+                既知の制限（"Table N."形式のキャプション分割）:
+                `_ABBREVIATIONS`（略語リスト）には"fig."/"sec."等は
+                あるが"tab."/"table."は含まれないため、"Tab. 1
+                summarizes..."のような本文中の参照は"Tab."の直後で
+                文分割される。さらに"Table 1. Correspondences..."
+                のようなピリオド区切りのキャプション（例: sample2.pdf
+                表1・表2）は、分割位置が"Table"の直後ではなく数字
+                "1."の直後になるため、略語リストに"table."を追加しても
+                分割は防げない（"1."は略語ではなく数字なので、いずれに
+                せよ非分割の判定対象にならない）。このため"Table 1."が
+                単独の1文（CAPTION-S1）、続く説明文が別の1文
+                （CAPTION-S2）になる。安全に直すにはキャプション処理
+                専用の結合ロジックが別途必要だが、内容は失われず（両方
+                の文がそのまま翻訳対象になる）、生成PDF上でも問題が
+                無いことを確認済みのため、対応は見送っている。
                 テスト対象:
                   - スイートB（PDF解析パイプライン基本検証）: test_figure_caption_is_separated_from_body_textで、図キャプションが文単位に正しく分割されることを確認している。
                   - スイートC（文字列処理ユーティリティ単体テスト）: test_split_sentences_handles_abbreviationsで、"Fig."/"Sec."/"e.g."等の略語直後で誤分割しないことを直接確認している。
@@ -396,8 +449,8 @@
             処理内容: 前付け・見出し・本文段落を判別し、それぞれの
               Elementとして追加する。
 
-              既知の仕様（"ABSTRACT"見出しの扱い、2026-08-09確認）:
-              HEADING_RE（pdf_text_utils.py）は"1. INTRODUCTION"のような
+              既知の仕様（"ABSTRACT"見出しの扱い）: HEADING_RE
+              （pdf_text_utils.py）は"1. INTRODUCTION"のような
               「番号＋ピリオド＋見出し文」の形式しか見出しと判定しない
               ため、番号を持たない"ABSTRACT"はHeadingElementにはならず、
               通常の本文段落（TextBlockElement）の1文として扱われる
@@ -408,12 +461,12 @@
               除外はされないが、章の区切りとしての機能は結果的に果たす）。
               意図的な仕様でバグではない。
 
-              既知の限界（インライン数式の目視確認範囲、2026-08-09確認）:
-              text中の数式スパンを$...$で包む処理自体はMinerUが行い、
-              本関数はMinerUの出力をそのまま受け取るだけ（自前の数式
-              判定ロジックは持たない）。test_inline_math_is_wrapped_
-              in_dollar_signsが直接assertしているのは"$p ( y \mid x )$"
-              と"\mathbf { I }"（英語代名詞"I"と同形の紛らわしいケース）
+              既知の限界（インライン数式の目視確認範囲）: text中の
+              数式スパンを$...$で包む処理自体はMinerUが行い、本関数は
+              MinerUの出力をそのまま受け取るだけ（自前の数式判定ロジ
+              ックは持たない）。test_inline_math_is_wrapped_in_dollar_
+              signsが直接assertしているのは"$p ( y \mid x )$"と
+              "\mathbf { I }"（英語代名詞"I"と同形の紛らわしいケース）
               の2箇所のみだが、これはpage_02_en.md全体に多数ある
               インライン数式（$\mathbf{z}_0 = E(y)$等）のうちの代表例
               であり、「この2箇所以外は数式とみなさない」という意味
@@ -434,6 +487,8 @@
                 処理内容: 前付け判定（ページ1冒頭のタイトル・著者・
                   所属をどこまで割り当てるか）に使う。
                 テスト対象: 直接のテストは無く、_handle_text_item内の前付け判定条件として間接的に実行されるのみ。
+
+              wrap_bare_greek_letters（→1.2.1.2.1.2.0と同一）
 
               restore_merged_hyphens（→1.2.1.2.1.2.1と同一）
 
@@ -567,11 +622,13 @@
         生成（Step4相当）のみ実行する。run_translation直後に
         1.2.2.2.4 check_unprotected_math_survivalを呼び、未保護の
         数式らしき断片がDeepL翻訳で壊れていないかの警告ログを出す
-        （2026-08-09追加。処理は止めない）。続けて
-        1.2.2.1.3 write_translated_pagesでpage_*_ja.mdを書き出し、
-        1.2.2.2.5 report_untranslated_fragment_candidatesで、未検出
-        （未保護）の数式らしき候補を情報ログとして出力する
-        （いずれも2026-08-09追加。処理は止めない）。
+        （処理は止めない）。続けて1.2.2.2.7 protect_confirmed_single_
+        letter_leaksを呼び、翻訳後も半角のまま残った単体アルファベット
+        の数式変数（"x"/"y"/"z"/"K"等）をen_text/ja_text双方の該当箇所
+        で$...$保護する（再翻訳はしない後処理）。続けて1.2.2.1.3
+        write_translated_pagesでpage_*_ja.mdを書き出し、1.2.2.2.6
+        report_untranslated_fragment_candidatesで、未検出（未保護）の
+        数式らしき候補を情報ログとして出力する（いずれも処理は止めない）。
       テスト対象:
         - スイートG（翻訳・PDF生成統合／DeepLモック）: 3テストとも、DeepL呼び出しをmonkeypatchでモック化した上でtranslate_and_exportを実行する。test_translate_and_export_with_mocked_deeplで、sample0.pdf実データ（`processed` fixture経由）から3種PDFが生成されること・paper_ja.pdfに日本語訳が反映されること・page_*_ja.mdが実際に生成されることを、test_translate_and_export_translates_all_translatable_unitsで、自作Markdown（翻訳対象5文）の全文に訳文が反映されている（1文でも欠けていないか）ことを、test_translate_and_export_excludes_references_sectionで、参考文献セクションが翻訳対象から除外され原文のまま残ることを確認している。
         - スイートK（DeepL実課金統合テスト）:
@@ -579,11 +636,12 @@
           translate_and_export自体は呼ばず、その内部で行っているのと
           同じ手順（parse_output_dir→normalize_math→
           exclude_references_section→run_translation相当の実DeepL
-          呼び出し→write_translated_pages→
-          report_untranslated_fragment_candidates）を直接再現して
-          検証している（PDF生成部分は本テストの目的に不要なため省略。
-          2026-08-09、旧・test_check_unprotected_math_survival_
-          against_real_deeplから置き換え。詳細は下記1.2.2.1.3参照）。
+          呼び出し→protect_confirmed_single_letter_leaks→
+          write_translated_pages→report_untranslated_fragment_
+          candidates→許可リストに基づく全数チェック。詳細は
+          testExplain.txtスイートK参照）を直接再現して検証している
+          （PDF生成部分は本テストの目的に不要なため省略。詳細は下記
+          1.2.2.1.3参照）。
 
       1.2.2.1 parse_output_dir（md_tag_parser.py）
         入力:
@@ -617,7 +675,7 @@
             処理内容: タグ文字列のパターンから種別を判定する。
             テスト対象: タグ文字列からkindを判定するロジックそのものを直接検証するテストは無く、parse_page_file経由で間接的に実行されるのみ。
 
-        1.2.2.1.3 write_translated_pages（md_tag_parser.py。2026-08-09追加）
+        1.2.2.1.3 write_translated_pages（md_tag_parser.py）
           入力:
             - units: DocUnitのリスト（翻訳済み、ja_text設定済みのもの）
             - output_dir: 出力先ディレクトリ
@@ -628,8 +686,9 @@
             `[tag] ja_text`）でpage_{page:02d}_ja.mdとして書き出す。
             翻訳結果を人間が目視確認しやすくする（PDFをレンダリング
             せずテキストのまま原文と見比べられる）ほか、
-            1.2.2.2.5 report_untranslated_fragment_candidatesの入力
-            としても使う。
+            1.2.2.2.6 report_untranslated_fragment_candidatesの入力
+            としても使う。翻訳・PDF生成のたびに本番実行から自動的に
+            呼ばれるため、page_*_ja.mdは常に最新の翻訳結果を反映する。
           テスト対象:
             - スイートC（文字列処理ユーティリティ単体テスト）:
               test_write_translated_pages_preserves_tag_formatで、
@@ -666,10 +725,10 @@
           テスト対象:
             - スイートB（PDF解析パイプライン基本検証）:
               test_math_protection_round_trips_all_real_inline_mathで、
-              sample0.pdf page_02_en.mdに実際に含まれる24個の数式スパン
+              sample0.pdf page_02_en.mdに実際に含まれる25個の数式スパン
               全てが検出され、置換後のテキストに"$"が一切残らないこと
               （＝DeepLへの翻訳リクエストから確実に除外されること）を
-              直接検証している（2026-08-09追加）。
+              直接検証している。
             - normalize/translate_with_deepl経由でも間接的に実行される。
 
           1.2.2.2.1.1 _replace（math_protection.py）
@@ -692,7 +751,7 @@
                 sample0.pdf page_02_en.mdに実際に含まれる
                 "n \textless 1 0 0"というエスケープが"n < 1 0 0"へ
                 正規化されることを、_replace/protect経由で間接的に
-                実データで検証している（2026-08-09追加）。
+                実データで検証している。
 
         1.2.2.2.2 restore（math_protection.py）
           入力:
@@ -706,11 +765,10 @@
               test_math_protection_round_trips_all_real_inline_mathで、
               protect→restoreのラウンドトリップが（\textless/
               \textgreaterの正規化を除き）元テキストと完全一致することを
-              直接検証している（2026-08-09追加）。
+              直接検証している。
             - normalize/translate_with_deepl経由でも間接的に実行される。
 
-      1.2.2.2.3 find_unprotected_math_like_tokens（math_protection.py。
-          2026-08-09追加）
+      1.2.2.2.3 find_unprotected_math_like_tokens（math_protection.py）
         入力:
           - text: 検査対象の文字列
         出力: "文字 = 英数字"パターンにマッチした断片のリスト（例:
@@ -729,8 +787,7 @@
             検出、$...$保護済みスパンの除外、"="を伴わない単独文字が
             検出されないことを直接検証している。
 
-      1.2.2.2.4 check_unprotected_math_survival（math_protection.py。
-          2026-08-09追加）
+      1.2.2.2.4 check_unprotected_math_survival（math_protection.py）
         入力:
           - units: DocUnitのリスト（翻訳済み、ja_textが設定済みのもの）
           - log: 警告メッセージを受け取るコールバック（既定はprint）
@@ -752,47 +809,53 @@
           - スイートK（DeepL実課金統合テスト）:
             test_page_ja_md_and_candidate_detection_against_real_deepl
             内で、sample0.pdfを実際にDeepLで翻訳した結果に対しても
-            間接的に実行されている（2026-08-09、CLAUDE.mdの例外規定に
-            基づきDeepLをモック化しないテスト。当初はこの関数専用の
-            hard assertionテスト
-            test_check_unprotected_math_survival_against_real_deeplを
-            用意したが、検出パターンが「文字=英数字」のみと狭く、実際
-            に誤りを検知する見込みが低い割にDeepL課金・実行時間の
-            コストが見合わないと判断し、より広い検出網を持つ
-            1.2.2.2.5 report_untranslated_fragment_candidatesの検証を
-            兼ねる現行テストに置き換えた）。
+            間接的に実行されている（CLAUDE.mdの例外規定に基づき
+            DeepLをモック化しないテスト）。
 
-      1.2.2.2.5 find_untranslated_fragment_candidates（math_protection.py。
-          2026-08-09追加）
+      1.2.2.2.5 find_untranslated_fragment_candidates（math_protection.py）
         入力:
           - ja_text: 検査対象の日本語訳文字列
         出力: 未検出（未保護）の数式らしき候補断片のリスト
         処理内容: 日本語訳では地の文がほぼ全て全角文字になる一方、
           DeepLが自然言語として翻訳しない固有名詞・数式的表記は半角の
           まま残る傾向があることを利用する。protectで保護済み数式
-          スパンを除いたja_textから、非空白の半角文字で始まり終わる
-          区間（スペースを挟んだ"t = 1"のような表記も1区間としてまとめる）
-          を抽出し、(a)英字を1つ以上含む、(b)4文字以下または
-          "()=_^{}"等の記号を含む、の両方を満たすものを候補として返す。
+          スパンを除いたja_textから、非空白の半角文字（またはギリシャ
+          文字α-ω/Α-Ω）で始まり終わる区間（スペースを挟んだ"t = 1"
+          のような表記も1区間としてまとめる）を抽出し、(a)英字または
+          ギリシャ文字を1つ以上含む、(b)4文字以下または"()=_^{}"等の
+          記号を含む、の両方を満たすものを候補として返す。
           find_unprotected_math_like_tokens（1.2.2.2.3）より広い網だが、
           "FLUX"や"DiT"のような短い固有名詞・"(i)(ii)(iii)"のような
           列挙記号も誤検知として拾う（人間が確認する前提のヒューリス
           ティック）。
+
+          既知の限界（裸の数字1文字だけの数式漏れ）: 上記(a)の条件
+          （英字/ギリシャ文字を1つ以上含む）により、"$...$"で保護
+          されていない裸の数字1つだけの数式漏れ（例: page_02の
+          "from t = 1 to 0 with K discrete steps"の"0"。"t = 1"側は
+          $...$には保護されていないが"="を含むため検出されるのに対し、
+          "0"は単独の数字のため検出されない）は検出できない。この
+          条件を外すと、見出し番号("1."）・節番号の参照("2.2"）・
+          引用番号("[12]"）等、本文中に大量に存在する正当な半角の裸
+          数字を誤検知してしまい実用にならないため、意図的な設計上の
+          トレードオフとして残している。この種の裸数字の漏れは、
+          スイートKのKNOWN_LEAKED_MATH_FRAGMENTS（下記1.2.2.2.6参照）
+          に人間が目視確認した結果として記録する運用でカバーする。
         テスト対象:
           - スイートC（文字列処理ユーティリティ単体テスト）:
             test_find_untranslated_fragment_candidatesで、"t = 1"/
             "t = 0"のようなスペースを含む断片が分断されず1つにまとまる
-            ことを含め、5ケースを直接検証している。
-          - スイートK（DeepL実課金統合テスト）:
-            実際のDeepL翻訳結果（page_02_ja.md相当）に対して実行した
-            ところ、"x"/"y"/"z"/"t = 1"/"t = 0"/"K"という6件の未検出
-            候補（find_unprotected_math_like_tokensでは"t = 1"/"t = 0"
-            以外検出できなかった）と、"DiT"/"LoRA"/"FLUX"/"(i)"/"(ii)"/
-            "(iii)"という7件の誤検知が確認された（2026-08-09の目視
-            検証記録）。
+            ことに加え、ギリシャ文字("γ")が半角英数字と同様に候補として
+            検出されることを含め、6ケースを直接検証している。
+          - スイートK（DeepL実課金統合テスト）: 実際のDeepL翻訳結果
+            （page_01_ja.md/page_02_ja.md）に対して実行し、検出された
+            候補が人間確認済みの許可リストの範囲内にあることを確認
+            している（許可リストの詳細はtestExplain.txtスイートK参照）。
+            裸の数字1つだけの数式漏れ"0"（上記「既知の限界」参照）は
+            本関数では検出されないが、目視確認によりKNOWN_LEAKED_
+            MATH_FRAGMENTS（下記参照）へ別途記録している。
 
-      1.2.2.2.6 report_untranslated_fragment_candidates（math_protection.py。
-          2026-08-09追加）
+      1.2.2.2.6 report_untranslated_fragment_candidates（math_protection.py）
         入力:
           - units: DocUnitのリスト（翻訳済み、ja_text設定済みのもの）
           - log: 情報メッセージを受け取るコールバック（既定はprint）
@@ -814,8 +877,64 @@
           - スイートK（DeepL実課金統合テスト）:
             test_page_ja_md_and_candidate_detection_against_real_deepl
             で、実際のDeepL翻訳結果に対して例外を出さず実行できる
-            ことを確認している（候補の内容自体はヒューリスティックの
-            ためassertしない）。
+            ことを確認している。あわせて同テスト内で1.2.2.2.5を直接
+            units全体へ適用し、人間確認済みの許可リスト
+            （KNOWN_FALSE_POSITIVE_FRAGMENTS / KNOWN_LEAKED_MATH_
+            FRAGMENTS。test_translator.py内で定義）に無い未知の候補が
+            無いことをassertする、page全体を対象にしたフルチェックも
+            行っている（詳細はtestExplain.txtスイートK参照）。
+
+      1.2.2.2.7 protect_confirmed_single_letter_leaks（math_protection.py）
+        入力:
+          - units: DocUnitのリスト（翻訳済み、en_text/ja_text設定済みのもの）
+          - log: 情報メッセージを受け取るコールバック（既定はprint）
+        出力: 情報メッセージのリスト（無ければ空リスト）
+        処理内容: 翻訳対象unitごとに1.2.2.2.5 find_untranslated_
+          fragment_candidatesで候補を検出し、そのうち半角アルファベット
+          1文字だけの候補（例:"x","K"）に限定して、en_text・ja_text
+          双方の該当箇所に直接$...$を挿入し保護する。実在の英単語
+          （"I"や"a"等）は通常の翻訳で全角の日本語に置き換わり候補として
+          残らないため、翻訳後も半角のまま生き残っている単体アルファ
+          ベットは数式変数である可能性が高いと判断できる（"DiT"や
+          "NMS"のような複数文字のトークンは実在の固有名詞・略語と
+          区別できないため対象外のまま、1.2.2.2.6のログのみで扱う）。
+          DeepLへの再翻訳は行わない（1回目の翻訳で確定済みのテキストに
+          後から$...$を挿入するだけの後処理）。置換の際はunit.en_text/
+          unit.ja_textをそれぞれ1.2.2.2.1 protect / 1.2.2.2.2 restoreで
+          一時的にプレースホルダへ退避してから行うため、既に$...$で
+          保護済みの数式スパン（例:"$p ( y \mid x )$"）の内部にある
+          同名の文字は二重に囲まれない。
+        処理内容の呼び出し元: translate_and_export（1.2.2）が、
+          1.2.2.2.4 check_unprotected_math_survival直後・
+          1.2.2.1.3 write_translated_pagesより前に本番実行のたびに
+          自動的に呼び出す。
+        テスト対象:
+          - スイートC（文字列処理ユーティリティ単体テスト）:
+            test_protect_confirmed_single_letter_leaks_wraps_matching_
+            occurrencesで、未保護の単体アルファベット（"z"）が
+            en_text/ja_text双方の同じ箇所で$...$に置き換わることを、
+            test_protect_confirmed_single_letter_leaks_does_not_touch_
+            existing_math_spansで、既に$...$保護済みのスパン内部にある
+            同名の文字（"$p ( y \mid x )$"内の"x"）を二重に囲んで
+            壊さないことを、test_protect_confirmed_single_letter_leaks_
+            skips_multi_char_tokensで、"DiT"のような複数文字のトークン
+            は対象外のままであることを、test_protect_confirmed_single_
+            letter_leaks_skips_non_translatable_unitsで、翻訳対象外
+            unitは無視されることを直接検証している。
+          - スイートK（DeepL実課金統合テスト）:
+            test_page_ja_md_and_candidate_detection_against_real_deepl
+            が、本番のtranslate_and_exportと同じ位置で本関数を実際の
+            DeepL翻訳結果に対して実行し、"x"/"y"/"z"/"K"が以降の全数
+            チェックで候補として検出されなくなる（＝保護された）ことを
+            間接的に確認している。
+
+          実装上の注意点: 置換をen_text/ja_textへ直接（protect/restore
+          を経由せず）適用する実装は避けること。既に$...$で保護済みの
+          数式スパンの内部にある同名の文字まで誤って二重に$で囲んで
+          しまい、数式スパンが破損する（例:"$p ( y \mid x )$"が
+          "$p ( $y$ \mid $x$ )$"のように壊れる）。上記の通りprotect/
+          restoreを経由する実装にすることで、既存スパンの内部を
+          変更しないようにしている。
 
       1.2.2.3 exclude_references_section（md_tag_parser.py）
         入力:
@@ -824,7 +943,7 @@
         処理内容: 1.2.2.3.1で各unitの章スラッグを求め、"references"
           なら翻訳対象から除外し原文をja_textにコピーする。
         テスト対象:
-          - スイートG（翻訳・PDF生成統合／DeepLモック）: test_translate_and_export_excludes_references_sectionで直接検証されている。参考文献セクション（見出し"REFERENCES"＋本文1文）を含む自作Markdownを用意し、翻訳後もその見出し・本文が原文の英語のまま出力PDFに残ることを確認している（2026-08-09追加。それ以前はsample0.pdfに参考文献セクションが無いため、この除外分岐を狙った専用の入力が無く、test_translate_and_export_with_mocked_deeplの中で経由されるだけだった）。
+          - スイートG（翻訳・PDF生成統合／DeepLモック）: test_translate_and_export_excludes_references_sectionで直接検証されている。参考文献セクション（見出し"REFERENCES"＋本文1文）を含む自作Markdownを用意し、翻訳後もその見出し・本文が原文の英語のまま出力PDFに残ることを確認している。
 
         1.2.2.3.1 _section_slug（md_tag_parser.py）
           入力:
@@ -988,7 +1107,7 @@
               - auto-render.min.jsの中身: 自動数式検出・描画拡張のJavaScriptソース文字列
             処理内容: vendor/katex/を読み込みlru_cacheで1回だけ実行、
               1.2.2.7.3.1.1でフォント埋め込みする。
-            テスト対象: KaTeXアセットの読み込み結果を直接検証するテストは無く、_wrap_html経由で間接的に実行されるのみ。実際の数式描画結果は目視確認以外で検証されておらず、このテストギャップは2026-08-09にtestExplain.txtスイートAとして明示された（→testExplain.txtスイートA参照）。
+            テスト対象: KaTeXアセットの読み込み結果を直接検証するテストは無く、_wrap_html経由で間接的に実行されるのみ。実際の数式描画結果は、対応する自動テストが存在しないためtestExplain.txtスイートAとして目視確認を行う（→testExplain.txtスイートA参照）。
 
             1.2.2.7.3.1.1 _inline_css（katex_assets.py）
               入力:
@@ -1040,7 +1159,7 @@
     呼ぶ。1.2.2自身がこのファイルにあるのは、「既存のMarkdownから
     翻訳・PDF生成だけをやり直す」という再利用可能な入口を、mainと
     同じ場所でユーザー（および1.2.2だけを直接呼びたいテスト）に
-    提供したいためである（explain.txt [0]相当の旧「補足」参照）。
+    提供したいためである。
 
   誰が呼ぶか: ユーザーがコマンドラインから直接実行する。
 
@@ -1135,6 +1254,7 @@
 [5] pdf_text_utils.py … 文字列処理ユーティリティ
 ----------------------------------------------------------------------
   含まれる関数（第1部の番号）:
+    1.2.1.2.1.2.0 wrap_bare_greek_letters /
     1.2.1.2.1.2.1 restore_merged_hyphens / 1.2.1.2.1.2.1.1 repl /
     1.2.1.2.1.2.1.1.1 split_merged_compound /
     1.2.1.2.1.2.1.1.1.1 is_known_word /
@@ -1147,12 +1267,13 @@
 
   なぜこのファイルにまとまっているか:
     「文分割」「改行ハイフンの復元（de- + tection→detection）」
-    「見出し・キャプションの構造判定」という、PDFやMinerUの出力
-    形式に関する知識を一切持たない純粋な文字列変換だけをここに
-    切り出している。[4]（pdf_structure_analyzer.py）から呼ばれる
-    側であり、他のどのパイプラインモジュールにも依存しない「末端
-    ユーティリティ」として設計されているため、単体テスト（スイート
-    Cが該当）がPDF処理を一切介さずに完結できる。
+    「見出し・キャプションの構造判定」「本文中の孤立したギリシャ
+    文字の数式保護」という、PDFやMinerUの出力形式に関する知識を
+    一切持たない純粋な文字列変換だけをここに切り出している。[4]
+    （pdf_structure_analyzer.py）から呼ばれる側であり、他のどの
+    パイプラインモジュールにも依存しない「末端ユーティリティ」
+    として設計されているため、単体テスト（スイートCが該当）が
+    PDF処理を一切介さずに完結できる。
 
   補足（後方互換エイリアス）: pdf_processor.py（[2]）は
   split_sentences / HEADING_RE / slugify_section_name（別名
@@ -1231,10 +1352,9 @@
     以降の翻訳・PDF生成ステップ（1.2.2以下）が、タグの「種別」だけ
     を見て分岐できるようにする役割も、同じ理由でここに置かれている
     （参考文献セクションの除外、DeepL文脈の組み立ても同様）。
-    2026-08-09に追加したwrite_translated_pagesは逆方向（DocUnitから
-    タグ付きMarkdownへの書き出し）だが、タグ形式の詳細を知っている
-    という同じ理由でこのファイルに置いている（parse_page_fileの
-    逆変換にあたる）。
+    write_translated_pagesは逆方向（DocUnitからタグ付きMarkdownへの
+    書き出し）だが、タグ形式の詳細を知っているという同じ理由でこの
+    ファイルに置いている（parse_page_fileの逆変換にあたる）。
 
   誰が呼ぶか: translate_paper.py（1.2.2.1・1.2.2.3・1.2.2.4）、
               および test_translator.py（テストから直接）。
@@ -1249,7 +1369,8 @@
     1.2.2.2.3 find_unprotected_math_like_tokens /
     1.2.2.2.4 check_unprotected_math_survival /
     1.2.2.2.5 find_untranslated_fragment_candidates /
-    1.2.2.2.6 report_untranslated_fragment_candidates
+    1.2.2.2.6 report_untranslated_fragment_candidates /
+    1.2.2.2.7 protect_confirmed_single_letter_leaks
 
   なぜこのファイルにまとまっているか:
     「DeepLに生のLaTeXを渡すと誤訳・破損する恐れがあるため、翻訳
@@ -1260,10 +1381,15 @@
     translate_and_export内、1.2.2.5.1のprotect/restoreはtranslate_
     with_deepl内）横断的なユーティリティのため、どちらのファイルに
     も属さない独立モジュールにしてある。
-    2026-08-09に追加した4関数（1.2.2.2.3〜1.2.2.2.6）は、保護その
-    ものではなく「保護されるべき数式が実際に保護・検出されているか」
-    という一段メタな検証責務を持つが、数式に関するロジックという点で
-    同じ理由からこのファイルに置いている。
+    1.2.2.2.3〜1.2.2.2.6は、保護そのものではなく「保護されるべき
+    数式が実際に保護・検出されているか」という一段メタな検証責務を
+    持つが、数式に関するロジックという点で同じ理由からこのファイル
+    に置いている。1.2.2.2.7 protect_confirmed_single_letter_leaksは、
+    検出（1.2.2.2.5）の結果を使って実際に保護（$...$の挿入）まで
+    行う点で1.2.2.2.3〜1.2.2.2.6とは性質が異なるが、find_
+    untranslated_fragment_candidatesに依存する点・数式に関する
+    ロジックという点は同じであるため、引き続きこのファイルに置いて
+    いる。
 
 
 ----------------------------------------------------------------------
@@ -1324,7 +1450,7 @@
     され、有料APIキーを消費しないようになっている（課金対象の
     deepl_translator.translate_with_deepl（1.2.2.5.1）は実際には
     呼ばれず、テスト用のダミー関数に差し替えられる）。各テスト
-    スイート（A〜J）の詳細はtestExplain.txtを参照。
+    スイート（A〜K）の詳細はtestExplain.txtを参照。
 
   誰が呼ぶか: 開発者（pytestコマンド、またはClaude Codeの自律修正
               ループ）。
@@ -1357,7 +1483,7 @@
 ■ なぜこの構成になっているか（設計意図のまとめ）
 
   1. 「解析（MinerU起点）」と「翻訳・PDF生成（DeepL/Playwright起点）」を
-     completely 分離し、間を「タグ付きMarkdown」というテキスト形式の
+     完全に分離し、間を「タグ付きMarkdown」というテキスト形式の
      成果物で受け渡す設計になっている。これにより、
        - 一度Markdownまで生成すれば、DeepL APIキーの問題やPDF
          レンダリングの調整だけを translate_and_export() で

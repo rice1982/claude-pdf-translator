@@ -4,6 +4,14 @@
 - Claude Code 起動コマンド:
   claude --dangerously-skip-permissions
 
+  ⚠️ **注意**: `--dangerously-skip-permissions` は、ファイル編集やコマンド
+  実行の許可確認をすべて省略する設定であり、その名の通り危険なオプション
+  です。このリポジトリの開発時は上記コマンドで運用していましたが、
+  本設定は各自の環境・信頼できるプロジェクトに限定して自己責任で使用
+  してください。特に見知らぬリポジトリやコードに対してこのオプション
+  付きでClaude Codeを実行することは推奨されません。通常は許可確認が
+  都度入る `claude` コマンド（オプション無し）での利用を推奨します。
+
 ## Loop Engineering & Execution Rules (自律ループ動作ルール)
 1. エラー自律修正ループの徹底:
    - python スクリプトの実行や pytest でエラーが発生した際、人間に報告して指示を待つのではなく、原因分析 -> コード修正 -> 再テスト実行 のループを修正が完了するまで自律的に回すこと。
@@ -42,6 +50,7 @@ PDFから本文、画像、メタデータを分離・抽出・翻訳（DeepL）
 ## Test & Execution Rules (テストおよび実行運用規定)
 1. **テスト・実行対象データ**:
    - 軽量テスト用: `input/sample0.pdf`
+   - 表抽出・章解決・印刷ページラベル確認用: `input/sample1.pdf` / `input/sample2.pdf`（論文フルサイズ）
    - 実稼働・章単位テスト用: `input/sample3.pdf`（**ただし、指定ページ範囲 `--start` / `--end` または `--start-label` / `--end-label` のみ指定して実行すること**）
 2. **`sample3.pdf` 運用ルール**:
    - `sample3.pdf` 全体を一括で処理・テストすることは実行時間およびDeepL APIコスト管理の観点から禁止する。
@@ -49,7 +58,11 @@ PDFから本文、画像、メタデータを分離・抽出・翻訳（DeepL）
 3. **テスト実行指示・デフォルト翻訳エンジン**:
    - 通常の開発ループでは `pytest` または `sample0.pdf` を用いた高速な動作確認を中心に行い、章・範囲単位の確認が必要な場合のみ `sample3.pdf` の指定範囲を実行すること。
    - **`pytest` 実行時のテスト翻訳では、DeepLの有料APIキーを消費しないよう、DeepL呼び出し自体をモック化して自動化すること。**
-   - **例外（2026-08-09追加）**: `sample0.pdf` を対象に、実際のDeepL翻訳結果でしか検証できない項目（例: `page_XX_ja.md`の生成・未検出の数式らしき候補の検出が、実際のDeepL翻訳結果に対しても正しく機能するかの確認）に限り、DeepLを実課金でモック化せずに呼び出すテストを許可する。**この例外は`sample0.pdf`を用いるテストに限定し**、それ以外のPDF（`sample1`〜`sample3.pdf`）や、既存のDeepLモック前提のテスト（スイートG等）には適用しない。
+   - **例外**: `sample0.pdf` を対象に、実際のDeepL翻訳結果でしか検証できない項目（例: `page_XX_ja.md`の生成・未検出の数式らしき候補の検出が、実際のDeepL翻訳結果に対しても正しく機能するかの確認）に限り、DeepLを実課金でモック化せずに呼び出すテストを許可する。**この例外は`sample0.pdf`を用いるテストに限定し**、それ以外のPDF（`sample1`〜`sample3.pdf`）や、既存のDeepLモック前提のテスト（スイートG等）には適用しない。
+4. **未保護インライン数式のフルチェック（許可リストの運用）**:
+   - `test_page_ja_md_and_candidate_detection_against_real_deepl`（test_translator.py）は、`sample0.pdf`の実際のDeepL翻訳結果全体から`math_protection.find_untranslated_fragment_candidates`で未保護の数式らしき候補を洗い出し、`KNOWN_FALSE_POSITIVE_FRAGMENTS`（固有名詞・略語・列挙記号）／`KNOWN_LEAKED_MATH_FRAGMENTS`（本物の未保護数式）という2つの許可リストに無い未知の候補が出たら失敗する回帰テストである。
+   - DeepLの翻訳結果は完全に決定的ではないため、言い回しの変化によりこのテストが失敗することがある。失敗時は人間が実際の`page_XX_ja.md`・原文PDFを目視確認し、新しい候補を上記いずれかの許可リストへ追加すること。**内容を確認せず機械的にリストへ追加してテストを通すことは禁止する**（本テストの目的（未保護の数式漏れの検知）を損なうため）。
+   - 本物の数式漏れ（`KNOWN_LEAKED_MATH_FRAGMENTS`）は、可能な限り許可リストへの追加ではなく`pdf_text_utils.py`/`math_protection.py`側での自動`$...$`保護の実装を優先すること。ギリシャ文字（`wrap_bare_greek_letters`）と、翻訳後も半角のまま残る単体アルファベット変数（`protect_confirmed_single_letter_leaks`）は既にこの方針で自動保護済みであり、許可リストへの追加は「実在の固有名詞・略語と自動判別できない場合（例:"DiT","NMS"）」の最終手段として運用する。
 
 ## Code Standards
 - Python 3.13+

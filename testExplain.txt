@@ -10,29 +10,14 @@
 説明のある関数・エイリアスである（explain.txt 側もこのファイルに登場
 する関数をすべて含むよう更新済み）。
 
-全体構成: test_translator.py は1ファイルに48個の test_ 関数（うち8個は
+全体構成: test_translator.py は1ファイルに53個の test_ 関数（うち9個は
 @pytest.mark.parametrize により複数ケースを1関数で検証）を持つ。
 実行手段は `pytest` のみで、CLAUDE.md の運用規定により DeepL の実課金
 呼び出しは原則モック化されている（テストスイートG参照）。ただし
-2026-08-09に、sample0.pdfに限りDeepLを実課金でモック化せず呼び出す
-例外がCLAUDE.mdに追加され、スイートKの1テストのみがこれに該当する。
-全体を11個のスイートに分類できる（うちAは対応する自動テストが0件で、
-人間による確認が必須のスイート）。
-
-補足1: かつて存在した「入力サンプル存在確認スイート」
-（`test_sample_pdf_exists`: `input/sample0.pdf`の存在をassertするだけの
-テスト）は、2026-08-09に削除した。`_require_pdf_exists`（スイートJ）の
-`test_require_pdf_exists_passes_for_existing_file`が、実体として同じ
-sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在すること）」を
-検証しており、ファイルが無くなった場合はこのテストも（`pytest.raises`
-で囲んでいないため）明確にFailする。つまり当時のAが担っていた
-「黙ってskipせず明確にFailで知らせる」という役割は既にJに包含されて
-おり、当時のAは独自の検証価値を持たなくなっていたため削除した。
-
-補足2: 2026-08-09に、削除されたままだったAの文字を、削除時とは無関係の
-別の目的（TeX数式のKaTeX描画結果に関する、自動テストが存在しない
-検証ギャップの明示）のために再利用した。以前のAとの内容的な連続性は
-無い。詳細は下記[A]を参照。
+sample0.pdfに限りDeepLを実課金でモック化せず呼び出す例外がCLAUDE.mdに
+あり、スイートKの1テストのみがこれに該当する。全体を11個のスイートに
+分類できる（うちAは対応する自動テストが0件で、人間による確認が必須の
+スイート）。
 
 
 ■ 検証カテゴリについて（期待値の信頼性の指標）
@@ -82,7 +67,7 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
     何の安心材料も得られず、人間が都度直接確認する以外に手段が無い。
 
 
-■ テストスイート一覧（全10スイート／test_関数36個。うちAは自動テスト0件）
+■ テストスイート一覧（全10スイート／test_関数53個。うちAは自動テスト0件）
 
 ----------------------------------------------------------------------
 [A] TeX数式描画の目視確認スイート（0テスト・自動テストなし）
@@ -100,18 +85,17 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
     された後の見た目（KaTeXの実際のレンダリング結果）を検証する自動
     テストは存在しない。
 
-    翻訳前後で数式を保護・復元するmath_protection.pyについては、
-    2026-08-09に状況が変わった。protect/restoreはスイート[B]の
-    test_math_protection_round_trips_all_real_inline_mathで、
-    sample0.pdf実データに含まれる数式スパン全数（24個）を対象にした
-    直接ユニットテストが追加され、翻訳前後で数式が壊れず復元される
-    こと（\textless/\textgreaterの正規化を含む）は自動テストで
-    継続的に検知できるようになった。ただしnormalize自体（薄い
-    ラッパー関数）の直接テストは無いままであり、何より「KaTeXが
-    実際にPDF上で正しく描画されるか」という見た目の検証は、
-    math_protectionのテストが増えても依然として自動化されていない
-    （文字列としての保護・復元が正しいことと、それが最終的に画面上で
-    正しい数式として見えることは別の問題であるため）。
+    翻訳前後で数式を保護・復元するmath_protection.pyのprotect/restore
+    は、スイート[B]のtest_math_protection_round_trips_all_real_
+    inline_mathで、sample0.pdf実データに含まれる数式スパン全数
+    （25個。詳細はスイートB参照）を対象にした直接ユニットテストが
+    あり、翻訳前後で数式が壊れず復元されること（\textless/
+    \textgreaterの正規化を含む）は自動テストで継続的に検知できる。
+    ただしnormalize自体（薄いラッパー関数）の直接テストは無いままで
+    あり、何より「KaTeXが実際にPDF上で正しく描画されるか」という
+    見た目の検証は自動化されていない（文字列としての保護・復元が
+    正しいことと、それが最終的に画面上で正しい数式として見えることは
+    別の問題であるため）。
 
   検証カテゴリ: ◆要人間確認（対応する自動テストが無い）
     他の3カテゴリ（仕様完結型／実データ・要人間検証／機械的チェック・
@@ -121,7 +105,26 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
     こと」を検知する余地が無く、実際にPDFを開いて数式が正しく描画
     されているかを毎回人間が目視で確認する以外に確認手段が無い。
 
-  目視チェック実施状況: 未実施
+  目視チェック実施状況: 実施済み（人間が確認）。sample0.pdfを本番実行し、
+    生成された`output/output_sample0/paper_en.pdf`を人間が実際に開いて
+    目視確認した。
+    - "$x$"/"$y$"/"$z$"/"$K$"（単体アルファベット自動保護。P2-S6/
+      P2-S7/P2-S16）が、既存のMinerU由来の数式（"$p ( y \mid x )$"
+      等）と同じ数式イタリック体で、地の文と明確に区別できる見た目で
+      正しく描画されていることを確認した。
+    - "$\gamma$"（ギリシャ文字、TeXコマンド形式。P2-FIG1-CAPTION-S3の
+      "scale γ"）が、同様に正しい数式書体で崩れず描画されていることを
+      確認した。
+    - 分数・添字・太字ベクトル等を含む複雑な既存数式（Fig.1周辺の
+      $z_t = (1-t)z_0 + t\epsilon$等）も含め、描画崩れ・文字化けは
+      見当たらなかった。
+    - "t = 1 to t = 0"（P2-S7。自動保護対象外の既知の限界）は、拡大
+      して確認したところ周囲の地の文と同じ通常のフォントであり、
+      無保護のまま地の文として表示されている（想定通りの挙動）ことを
+      確認した。
+    なお、確認したのはsample0.pdf（2ページ）のみであり、他のサンプル
+    （sample1〜3.pdf）や、より複雑な数式パターンでの描画は未確認の
+    ままである。
 
   テスト対象（explain.txtの該当関数）:
     - pdf_renderer._wrap_html（KaTeXのCSS・JSを埋め込んだページ全体
@@ -132,9 +135,9 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
     - math_protection.normalize（薄いラッパー関数。直接のユニット
       テストは無く、translate_and_export経由の間接実行のみ）
     - math_protection.protect / restore / _replace / _normalize
-      （2026-08-09にスイートBで直接ユニットテストが追加された。
-      本スイートAの対象は、あくまでその復元結果が最終的にKaTeXで
-      正しく描画されるかという見た目の検証のみ）
+      （スイートBで直接ユニットテストがある。本スイートAの対象は、
+      あくまでその復元結果が最終的にKaTeXで正しく描画されるかという
+      見た目の検証のみ）
 
 
 ----------------------------------------------------------------------
@@ -179,11 +182,14 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
     - test_all_three_equations_are_detected_with_latex: 数式3つが
       画像として分離され、対応するLaTeXタグが付与されているか。
     - test_inline_math_is_wrapped_in_dollar_signs: 文中インライン数式
-      が $...$ で構造化されているか。
+      が $...$ で構造化されているか。"$p ( y \mid x )$"と
+      "\mathbf { I }"の2箇所を直接assertする、軽量・無課金な回帰用
+      spot checkである（DeepL APIキーが無くても実行できる）。page全体
+      を対象にした網羅的なチェックはスイートK参照。
     - test_math_protection_round_trips_all_real_inline_math:
-      page_02_en.mdに実際に含まれる数式スパン全数（24個）が
+      page_02_en.mdに実際に含まれる数式スパン全数（25個）が
       math_protection.protect/restoreのラウンドトリップで（\textless/
-      \textgreaterの正規化を除き）壊れず復元されるか（2026-08-09追加）。
+      \textgreaterの正規化を除き）壊れず復元されるか。
     - test_header_and_footer_noise_excluded: arXiv IDなどヘッダー/
       フッターのノイズが本文に混入していないか。
     - test_sentence_ids_are_sequential_per_page: 各ページの文IDが
@@ -195,7 +201,7 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
     実際にOCR・レイアウト解析した結果をそのままハードコードした
     もの。MinerUが誤読していないかを独立に確認した記録は無い。
 
-  既知の仕様（"ABSTRACT"見出しの扱い、2026-08-09確認）:
+  既知の仕様（"ABSTRACT"見出しの扱い）:
     test_front_matter_labels_are_not_counted_as_sentencesが検証している
     通り、"ABSTRACT"はHEADING_REの「番号＋ピリオド＋見出し文」形式に
     一致しないため見出し（HeadingElement）にはならず、本文の文の1つ
@@ -206,7 +212,7 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
     足りる、意図的な仕様（バグではない）。詳細はexplain.txtの
     1.2.1.2.1.5 _handle_text_item参照。
 
-  既知の仕様（段落がページをまたぐ場合の割り当て、2026-08-09確認）:
+  既知の仕様（段落がページをまたぐ場合の割り当て）:
     test_cross_page_paragraph_is_kept_on_starting_pageが検証している
     "(2) We add an edge-specific pixel loss..."/"(3) At inference
     time..."は、原本PDFでは物理2ページ目に印字されているが、
@@ -219,7 +225,7 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
     この挙動は意図的な仕様（バグではない）と判断してよい。詳細は
     explain.txtの1.2.1.2.1 _build_pages参照。
 
-  既知の限界（インライン数式の目視確認範囲、2026-08-09確認）:
+  インライン数式の網羅性について:
     test_inline_math_is_wrapped_in_dollar_signsが直接assertしている
     のは"$p ( y \mid x )$"と"\mathbf { I }"（英語代名詞"I"と同形の
     紛らわしいケース）の2箇所のみだが、page_02_en.mdには他にも多数の
@@ -237,39 +243,91 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
     限界として認識しておく必要がある。詳細はexplain.txtの
     1.2.1.2.1.5 _handle_text_item参照。
 
-    2026-08-09追加の自動安全網: 「原本PDFが本当に数式モードだったか」
-    の証明はできないが、「翻訳後もその数式が壊れずに残るか」は別の
-    角度から検証できる。日本語版PDF（paper_ja.pdf）で"p(y|x)"・
-    "N(0,I)"のIを実際に確認したところ、どちらもmath_protectionによる
-    保護のおかげで日本語の語順に合わせて位置が移動するだけで、数式
-    自体（イタリック体・太字を含む）は一字一句崩れず復元されていた
-    （もし数式として認識されず地の文としてDeepLに渡っていれば、
-    翻訳によって記法が変質するリスクがある）。この「保護されて
-    生き残るか」という性質を利用し、page_02_en.mdに実際に含まれる
-    数式スパン全数（24個）を対象にprotect/restoreのラウンドトリップを
-    検証する自動テスト（test_math_protection_round_trips_all_real_
-    inline_math）を追加した。人間が原本PDFを見て「これは数式らしい
-    見た目か」を判断する主観的な確認に加え、「検出された数式が翻訳
-    パイプラインを通じて確実に保護されるか」は自動テストで継続的に
-    担保されるようになった。
+    「原本PDFが本当に数式モードだったか」の証明はできないが、
+    「翻訳後もその数式が壊れずに残るか」は別の角度から検証できる。
+    日本語版PDF（paper_ja.pdf）で"p(y|x)"・"N(0,I)"のIを実際に確認
+    したところ、どちらもmath_protectionによる保護のおかげで日本語の
+    語順に合わせて位置が移動するだけで、数式自体（イタリック体・
+    太字を含む）は一字一句崩れず復元されていた（もし数式として認識
+    されず地の文としてDeepLに渡っていれば、翻訳によって記法が変質
+    するリスクがある）。この「保護されて生き残るか」という性質を
+    利用し、page_02_en.mdに実際に含まれる数式スパン全数（25個）を
+    対象にprotect/restoreのラウンドトリップを検証する自動テスト
+    （test_math_protection_round_trips_all_real_inline_math）がある。
+    人間が原本PDFを見て「これは数式らしい見た目か」を判断する主観的な
+    確認に加え、「検出された数式が翻訳パイプラインを通じて確実に
+    保護されるか」は自動テストで継続的に担保されている。
 
-    さらに2026-08-09、「そもそも$...$で保護すらされていない、数式検出
-    漏れの断片（例: page_02_en.mdの"decode a latent z"の"z"、
-    "from t = 1 to t = 0"の"t = 1"/"t = 0"、"K discrete steps"の"K"）」
-    が実際に存在することも判明した。これらはprotectの対象外なので
-    上記の自動テストではカバーされず、日本語版PDFで目視確認したところ
-    今回はDeepLが偶然壊さずに残していたが、保証は無い。この懸念に
-    対応するため、"文字 = 英数字"パターンを機械的に検出する
-    math_protection.find_unprotected_math_like_tokensと、翻訳後も
-    その文字列が残っているか確認するcheck_unprotected_math_survivalを
-    追加した（検出ロジック自体はスイートCで、実際のDeepL翻訳結果に
-    対する検証はスイートKで、それぞれテストしている）。ただしこの
-    ヒューリスティックは"="を伴う断片しか拾えず、単独の"z"や"K"のような
-    未保護の変数名は依然として検出できない（英単語との区別が付かず
-    誤検知が増えるため、意図的に対象外としている）。つまりインライン
-    数式の保護漏れ問題は部分的に緩和されたが、完全には解消していない。
+    さらに、「そもそも$...$で保護すらされていない、数式検出漏れの
+    断片（例: page_02_en.mdの"decode a latent z"の"z"、"from t = 1
+    to t = 0"の"t = 1"/"t = 0"、"K discrete steps"の"K"）」も実際に
+    存在する。これらはprotectの対象外なので上記の自動テストでは
+    カバーされない。この懸念に対応するため、"文字 = 英数字"パターン
+    を機械的に検出するmath_protection.find_unprotected_math_like_
+    tokensと、翻訳後もその文字列が残っているか確認するcheck_
+    unprotected_math_survivalがある（検出ロジック自体はスイートCで、
+    実際のDeepL翻訳結果に対する検証はスイートKで、それぞれテスト
+    している）。ただしこのヒューリスティックは"="を伴う断片しか
+    拾えず、単独の"z"や"K"のような未保護の変数名は依然として検出
+    できない（英単語との区別が付かず誤検知が増えるため、意図的に
+    対象外としている）。
 
-  目視チェック実施状況: 未実施
+    この検出範囲の限界を踏まえ、検出だけでなく実際に保護まで行う
+    2つの自動保護関数がある。
+      - pdf_text_utils.wrap_bare_greek_letters（構造解析段階。
+        本文中の孤立したギリシャ文字を自動的にTeXコマンド形式（例:
+        "γ"→"$\gamma$"）に変換して$...$で囲む。地の文にギリシャ文字が
+        実在の英単語として使われることは無いため誤爆リスクが低い。
+        なお生の文字のままでもKaTeXは等価に描画する（vendor/katex/
+        katex.min.js内部でエイリアス登録されていることを確認済み）が、
+        MinerU由来の他の数式スパンとの表記の一貫性のため、明示的な
+        TeXコマンド形式への変換を採用している）
+      - math_protection.protect_confirmed_single_letter_leaks（翻訳
+        直後・再翻訳無し。翻訳後も半角のまま生き残った単体アルファ
+        ベット"x"/"y"/"z"/"K"を、en_text/ja_text双方の該当箇所で
+        $...$保護する。実在の英単語なら通常の翻訳で消えるはずという
+        性質を利用）
+    この2つの自動保護により、"文字=英数字"パターン以外で検出される
+    「本物の数式漏れ」候補（x/y/z/K/t=1/t=0/γの7件）のうち5件
+    （x/y/z/K/γ）は自動保護されるようになり、スイートKの許可リスト
+    （KNOWN_LEAKED_MATH_FRAGMENTS）から除外されている（自動保護
+    された時点でfind_untranslated_fragment_candidatesの検出対象からも
+    外れるため）。残るのは"t = 1"/"t = 0"の2件のみで、これらは"="を
+    含む複数文字のトークンのため単体アルファベット限定のprotect_
+    confirmed_single_letter_leaksでは対象外のまま、引き続き許可
+    リストでの容認とする。
+
+    さらにスイートK（test_page_ja_md_and_candidate_detection_against_
+    real_deepl）が、page_01/page_02全体のtranslatable unit全てに
+    find_untranslated_fragment_candidatesを適用し、人間確認済みの
+    許可リストに無い未知の候補が出たら失敗する回帰テストになっている。
+    これにより「保護漏れが実際に存在するかどうか」の確認は、DeepL
+    実課金テストを実行すればpage全体を対象に自動化される（詳細は
+    スイートK参照。ただし課金・実行時間の都合上、pytestの通常実行では
+    DEEPL_API_KEY未設定時にスキップされる）。
+
+    それでもなお解消していない限界（裸の数字1文字の数式漏れ）:
+    find_untranslated_fragment_candidatesは「英字またはギリシャ文字を
+    1つ以上含む」ことを検出条件にしているため、"$...$"で保護されず、
+    かつ英字/ギリシャ文字を伴わない裸の数字1つだけの数式漏れ（例:
+    page_02の"from t = 1 to 0 with K discrete steps"の"0"。同じ文の
+    "t = 1"は"="を含むため検出されるが、"0"は検出されない）は検出でき
+    ない。この条件を外すと、見出し番号("1."）・節番号の参照("2.2"）・
+    引用番号("[12]"）等、本文中に大量に存在する正当な半角の裸数字を
+    誤検知してしまい実用にならないことを実データで確認済みのため、
+    意図的に検出対象外としている。この"0"は目視確認で発見済みだが、
+    許可リストに追加しても自動検出されないため回帰テストの対象には
+    ならず、将来同種の漏れが新たに発生しても機械的には検知できない
+    という限界が依然として残る（詳細はexplain.txtの1.2.2.2.5
+    find_untranslated_fragment_candidatesの「既知の限界」、および
+    本ファイルのスイートK参照）。
+
+  目視チェック実施状況: 実施済み（人間が確認）。本スイートのチェック
+    リストは、見出し判定・前付け（タイトル・著者・所属）・ページを
+    またぐ段落の結合・図と数式のPNG切り出し精度・ヘッダー/フッターの
+    ノイズ除外・インライン数式の判定を含め一通り確認済みである。数式
+    関連部分については上記の通りスイートK経由でも重ねて目視確認して
+    いる。
 
   テスト対象（explain.txtの該当関数）:
     - pdf_processor.process_pdf
@@ -284,34 +342,38 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
       parse_caption_label / slugify_section_name / HEADING_RE
       （analyze_structure内部から呼ばれる文字列処理。文分割・見出し
       判定・キャプション判定の正しさが本スイートの各テストに現れる）
+    - pdf_text_utils.wrap_bare_greek_letters（test_math_protection_
+      round_trips_all_real_inline_mathが検証する数式スパン数（25個）
+      の一部として、page_02_en.mdの"scale γ"が$\gamma$として保護
+      されていることが間接的に現れる）
     - pdf_document_builder.build_document（Step4。Markdown・画像の
       最終出力形式をこのスイートが検証している）
     - math_protection.protect / restore / _replace / _normalize
-      （2026-08-09追加。DeepL翻訳前後の数式プレースホルダ変換・復元、
-      およびKaTeXが解釈できないエスケープの正規化を、page_02_en.mdの
-      実データ（数式スパン24個）で直接検証している）
+      （DeepL翻訳前後の数式プレースホルダ変換・復元、およびKaTeXが
+      解釈できないエスケープの正規化を、page_02_en.mdの実データ
+      （数式スパン25個）で直接検証している）
 
 
 ----------------------------------------------------------------------
-[C] 文字列処理ユーティリティの単体テストスイート（PDF不使用／11テスト・
-    parametrizeにより計23ケース）
+[C] 文字列処理ユーティリティの単体テストスイート（PDF不使用／16テスト・
+    parametrizeにより計26ケース）
 ----------------------------------------------------------------------
   該当関数: test_split_sentences_handles_abbreviations（4ケース）,
     test_heading_regex_and_slugify（3ケース）,
     test_parse_caption_label（4ケース）,
-    test_find_unprotected_math_like_tokens（4ケース、2026-08-09追加）,
-    test_check_unprotected_math_survival_warns_when_token_missing
-    （2026-08-09追加）,
-    test_check_unprotected_math_survival_silent_when_token_preserved
-    （2026-08-09追加）,
-    test_check_unprotected_math_survival_skips_non_translatable_units
-    （2026-08-09追加）,
-    test_find_untranslated_fragment_candidates（5ケース、2026-08-09追加）,
-    test_report_untranslated_fragment_candidates_logs_info_not_warning
-    （2026-08-09追加）,
-    test_report_untranslated_fragment_candidates_skips_non_translatable_units
-    （2026-08-09追加）,
-    test_write_translated_pages_preserves_tag_format（2026-08-09追加）
+    test_wrap_bare_greek_letters（5ケース）,
+    test_find_unprotected_math_like_tokens（4ケース）,
+    test_check_unprotected_math_survival_warns_when_token_missing,
+    test_check_unprotected_math_survival_silent_when_token_preserved,
+    test_check_unprotected_math_survival_skips_non_translatable_units,
+    test_find_untranslated_fragment_candidates（6ケース）,
+    test_report_untranslated_fragment_candidates_logs_info_not_warning,
+    test_report_untranslated_fragment_candidates_skips_non_translatable_units,
+    test_write_translated_pages_preserves_tag_format,
+    test_protect_confirmed_single_letter_leaks_wraps_matching_occurrences,
+    test_protect_confirmed_single_letter_leaks_does_not_touch_existing_math_spans,
+    test_protect_confirmed_single_letter_leaks_skips_multi_char_tokens,
+    test_protect_confirmed_single_letter_leaks_skips_non_translatable_units
 
   何を調べているか:
     PDF解析を一切実行せず、文字列処理関数を直接入力文字列で検証する、
@@ -323,6 +385,13 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
       に変換できるか。
     - test_parse_caption_label: "Fig. 1:..." "Table 2:..." 等のキャプ
       ション文から種別（figure/table）と番号を正しく抽出できるか。
+    - test_wrap_bare_greek_letters: 地の文に単独で出現するギリシャ文字
+      （例:"scale γ"）がTeXコマンド形式（"$\gamma$"）に変換されて
+      $...$に包まれるか、複数文字が連続する場合は1つのスパンとして
+      個別のコマンドに変換・連結されるか、既に$...$保護済みのギリシャ
+      文字を二重に変換・ラップしないか、ギリシャ文字が無ければ変化
+      しないか、ラテン文字と同形でKaTeXに専用コマンドが無い大文字
+      （"Α"等）は変換されず元の文字のまま$...$に包まれるかを検証する。
     - test_find_unprotected_math_like_tokens: "t = 1 to t = 0"のような
       $...$で保護されていない数式らしき断片を検出できるか、$...$保護
       済みスパンや"="を伴わない単独文字（誤検知しやすいため対象外）を
@@ -335,15 +404,25 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
       DeepLを呼ばずに直接検証する。
     - test_find_untranslated_fragment_candidates: 日本語訳文字列
       （ja_text）に半角のまま残る未検出の数式らしき断片（"z"や"K"の
-      ような単独変数名を含む）を検出できるか、スペースを挟んだ
-      "t = 1"のような表記が分断されず1つの断片としてまとまるか、
-      $...$保護済みスパンが候補にならないかを検証する。
+      ような単独変数名、ギリシャ文字を含む）を検出できるか、スペース
+      を挟んだ"t = 1"のような表記が分断されず1つの断片としてまとまる
+      か、$...$保護済みスパンが候補にならないかを検証する。
     - test_report_untranslated_fragment_candidates_logs_info_not_warning
       / _skips_non_translatable_units: 候補が[警告]ではなく[情報]として
       ログ出力されること、翻訳対象外unitは無視されることを検証する。
     - test_write_translated_pages_preserves_tag_format: 自作unitsから、
       page_XX_en.mdと同じタグ形式（画像行・通常行）でpage_XX_ja.mdが
       正しく書き出されるかを検証する。
+    - test_protect_confirmed_single_letter_leaks_wraps_matching_occurrences
+      / _skips_multi_char_tokens / _skips_non_translatable_units:
+      未保護の単体アルファベット（"z"）がen_text/ja_text双方の同じ
+      箇所で$...$に置き換わるか、"DiT"のような複数文字のトークンは
+      対象外のままか、翻訳対象外unitは無視されるかを検証する。
+    - test_protect_confirmed_single_letter_leaks_does_not_touch_existing_math_spans:
+      既に$...$で保護済みの数式スパン（例:"$p ( y \mid x )$"）の内部に
+      ある同名の文字を、二重に$で囲んで壊さないかを検証する（詳細は
+      explain.txtの1.2.2.2.7 protect_confirmed_single_letter_leaksの
+      「実装上の注意点」参照）。
 
   検証カテゴリ: ◆仕様完結型
     入力・期待値ともに自作の文字列リテラルで、正規表現（HEADING_RE等）
@@ -360,17 +439,20 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
     - pdf_text_utils.parse_caption_label
         （pdf_processor._parse_caption_label というエイリアス経由で
         呼ばれる）
+    - pdf_text_utils.wrap_bare_greek_letters（検出・変換ロジック自体の
+      正しさをここで検証。実データ・実DeepLでの検証はスイートB・K参照）
     - math_protection.find_unprotected_math_like_tokens /
-      check_unprotected_math_survival（2026-08-09追加。検出・警告
-      ロジック自体の正しさをここで検証。実際のDeepL翻訳結果に対する
-      検証はスイートK参照）
+      check_unprotected_math_survival（検出・警告ロジック自体の正しさ
+      をここで検証。実際のDeepL翻訳結果に対する検証はスイートK参照）
     - math_protection.find_untranslated_fragment_candidates /
-      report_untranslated_fragment_candidates（2026-08-09追加。検出・
-      情報ログロジック自体の正しさをここで検証。実際のDeepL翻訳結果に
-      対する検証はスイートK参照）
-    - md_tag_parser.write_translated_pages（2026-08-09追加。タグ形式の
-      正しさをここで直接検証。実データ・実DeepLでの検証はスイートG・K
-      参照）
+      report_untranslated_fragment_candidates（検出・情報ログロジック
+      自体の正しさをここで検証。実際のDeepL翻訳結果に対する検証は
+      スイートK参照）
+    - math_protection.protect_confirmed_single_letter_leaks（保護ロジ
+      ック自体の正しさ（既存の$...$スパンを壊さないことを含む）を
+      ここで検証。実際のDeepL翻訳結果に対する検証はスイートK参照）
+    - md_tag_parser.write_translated_pages（タグ形式の正しさをここで
+      直接検証。実データ・実DeepLでの検証はスイートG・K参照）
 
 
 ----------------------------------------------------------------------
@@ -397,24 +479,21 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
     MinerUがsample1.pdf/sample2.pdfを実際にOCRした結果をそのまま
     ハードコードしたもの。
 
-  既知の制限（表脚注の扱い、2026-08-09確認）: 表の下に印字される脚注
-    （例: sample1.pdf表1の"*Our own implementation of GED, as no
-    official code was released."）は、MinerUの`table_footnote`
-    フィールドが空のまま`table_caption`側にキャプション文と混在して
-    返ってくることがある。以前はラベル（Fig./Table番号）を持たない
-    要素として丸ごと破棄されており、この脚注がpage_04_en.mdから完全に
-    欠落するバグがあった（本スイートの目視チェック中に発見・
-    pdf_structure_analyzer.pyの_handle_image_or_table_itemを修正し
-    2026-08-09に解消）。より高精度なMinerUバックエンド
-    （hybrid-engine/vlm-engine）でキャプション/脚注を確実に区別する
-    案も検討したが、この実行環境ではGPUメモリがほぼ無く1ページの
-    解析だけで30分以上かかり実用不可だったため採用を見送った。
-    現在は脚注をキャプションの続き文として結合する（内容の欠落は
-    無いが、「キャプション」と「脚注」という意味的な区別は付かない）
-    仕様を維持することとした。詳細はexplain.txtの
-    1.2.1.2.1.3 _handle_image_or_table_item参照。
+  既知の制限（表脚注の扱い）: 表の下に印字される脚注（例:
+    sample1.pdf表1の"*Our own implementation of GED, as no official
+    code was released."）は、MinerUの`table_footnote`フィールドが
+    空のまま`table_caption`側にキャプション文と混在して返ってくる
+    ことがある。ラベル（Fig./Table番号）を持たない要素は、直前の
+    ラベル付きキャプションへの継続文として結合する仕様になっている
+    （`pdf_structure_analyzer.py`の`_handle_image_or_table_item`）。
+    より高精度なMinerUバックエンド（hybrid-engine/vlm-engine）で
+    キャプション/脚注を確実に区別する案も検討したが、この実行環境では
+    GPUメモリがほぼ無く1ページの解析だけで30分以上かかり実用不可
+    だったため採用を見送った。現在の仕様では内容の欠落は無いが、
+    「キャプション」と「脚注」という意味的な区別は付かない。詳細は
+    explain.txtの1.2.1.2.1.3 _handle_image_or_table_item参照。
 
-  既知の制限（"Table N."形式のキャプション分割、2026-08-09確認）:
+  既知の制限（"Table N."形式のキャプション分割）:
     sample2.pdf表1・表2のキャプション（"Table 1. Correspondences
     between mathematical notations..."/"Table 2. Nomenclature of
     CPC-MS."）は、split_sentences（pdf_text_utils.py）の略語リストに
@@ -424,15 +503,11 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
     生成PDF上も問題が無いことを確認済みのため、修正は見送っている。
     詳細はexplain.txtのsplit_sentences項目参照。
 
-  目視チェック実施状況: 実施済み（2026-08-09）。6表すべてでキャプション
-    文言・表画像のクロップ精度（行・列・脚注等の欠け無し）を確認した。
-    表1(sample1.pdf、"table_p4_1.png")では脚注欠落バグを発見・修正
-    （上記参照）。表4(sample1.pdf)・表1(sample2.pdf)では当初"数式/
-    文章が抜けている"という懸念が上がったが、確認の結果チェックリスト
-    記載漏れによる誤認と判明。表1・表2(sample2.pdf)では上記の
-    "Table N."キャプション分割を確認したが、内容欠落や生成PDF上の
-    問題は無し。それ以外の項目（表2・3(sample1.pdf)、表2(sample2.pdf)
-    の画像クロップ含む）はすべて一致・問題無し。
+  目視チェック実施状況: 実施済み。6表すべてでキャプション文言・表画像
+    のクロップ精度（行・列・脚注等の欠け無し）を確認し、全件一致・
+    問題無し（表1(sample1.pdf、"table_p4_1.png")の脚注が欠落なく
+    キャプションの続き文として含まれていることも含む。上記「既知の
+    制限（表脚注の扱い）」参照）。
 
   テスト対象（explain.txtの該当関数）:
     - pdf_processor.process_pdf（[2]）
@@ -486,10 +561,10 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
     直感的に正しいと思う章分け」と一致しているかは、独立検証されて
     いない。
 
-  目視チェック実施状況: 実施済み（2026-08-09）。対象はresolve_chapter_
-    page_range系5テストのみ（parse_chapter_spec系2テストは仕様完結型
-    のため対象外）。sample0.pdf・sample1.pdfのしおりが空であること、
-    sample2.pdfの目次9件（Introduction@2, Scientific activities...@4,
+  目視チェック実施状況: 実施済み。対象はresolve_chapter_page_range系
+    5テストのみ（parse_chapter_spec系2テストは仕様完結型のため対象
+    外）。sample0.pdf・sample1.pdfのしおりが空であること、sample2.pdf
+    の目次9件（Introduction@2, Scientific activities...@4,
     Explaining...@10, AI and research automation@14, Future work@17,
     Conclusion@19, Nomenclature@2, Metropolis–Hastings...@4,
     References@21）、sample3.pdfのPreface@5("v")・Introduction@8
@@ -529,7 +604,7 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
       には番号無し見出し（"u1"〜"u6"）と番号付き見出し（"1. Sampling-
       based methods:"等）が実際に混在しており、fixture不要・6ページ分
       のみというCLAUDE.mdの運用規定に沿った最小限の範囲で、実データでの
-      挙動を確認する。2026-08-08に追加。
+      挙動を確認する。
 
   検証カテゴリ: ◆仕様完結型（test_unnumbered_headings_get_synthetic_
     section_ids）／◆実データ・要人間検証（test_unnumbered_headings_
@@ -539,12 +614,12 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
     文言（"Probabilistic Generative Models..."等）をそのまま期待値に
     しており、Bと同種のリスクを持つ。
 
-  目視チェック実施状況: 実施済み（2026-08-09）。対象はtest_unnumbered_
-    headings_in_real_book_pdfのみ（test_unnumbered_headings_get_
-    synthetic_section_idsは仕様完結型のため対象外）。sample3.pdfの
-    物理ページ67〜72を対象に、番号無し見出し6件（u1〜u6）・番号付き
-    見出し2件（1.sampling/2.approximate）、計8件の見出し文言の実在・
-    一致と、番号あり/なしの判定の正しさを確認し、全件一致した。
+  目視チェック実施状況: 実施済み。対象はtest_unnumbered_headings_in_
+    real_book_pdfのみ（test_unnumbered_headings_get_synthetic_
+    section_idsは仕様完結型のため対象外）。sample3.pdfの物理ページ
+    67〜72を対象に、番号無し見出し6件（u1〜u6）・番号付き見出し2件
+    （1.sampling/2.approximate）、計8件の見出し文言の実在・一致と、
+    番号あり/なしの判定の正しさを確認し、全件一致した。
 
   テスト対象（explain.txtの該当関数）:
     - pdf_structure_analyzer.analyze_structure（[2] Step2。自作データ
@@ -571,8 +646,7 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
     monkeypatchでダミー関数（すべての翻訳対象文に固定文字列"これは
     テスト用の日本語訳です。"を返す）に差し替えて `translate_and_export`
     （1.2.2: タグ解析・翻訳・PDF生成）を実行する、という共通の仕組みを
-    持つ3テスト。2026-08-09に、1テスト目の検証の薄さを補強する目的で
-    2テスト目・3テスト目を追加した。
+    持つ3テスト。
 
     - test_translate_and_export_with_mocked_deepl（元祖・sample0.pdf
       実データ使用）: スイート[B]の`processed` fixture（sample0.pdf
@@ -581,10 +655,11 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
          （対訳版／英語版／日本語版）
       2. そのうちpaper_ja.pdfに、モック翻訳文字列由来の日本語が1文字
          でも含まれているか
-      だけを確認する。「1文字でもあればPASS」という薄い検証のため、
-      翻訳対象50文中49文が未翻訳でも検知できない。2026-08-09に、
-      page_01_ja.md/page_02_ja.mdが実際に生成され、モック訳文字列を
-      含むことの確認も追加した（write_translated_pages参照）。
+      3. page_01_ja.md/page_02_ja.mdが実際に生成され、モック訳文字列を
+         含んでいるか
+      を確認する。「1文字でもあればPASS」という検証は薄く、翻訳対象
+      50文中49文が未翻訳でも検知できないという弱点があり、それを補う
+      ために以下の2テストがある。
 
     - test_translate_and_export_translates_all_translatable_units
       （自作Markdown使用）: 翻訳対象文の数が既知（5文: title 1 +
@@ -610,16 +685,13 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
     のハードコード）は持たない。ただしtest_translate_and_export_
     with_mocked_deeplは「1文字でもあればPASS」という検証範囲の薄さ
     ゆえに、それ単体では「1.2.2が本当に正しく動いている」ことを十分
-    には保証できない、という十分性のリスクを抱えていた。
-
-    2026-08-09に追加した後者2テストは、この十分性のリスクを部分的に
-    軽減する（翻訳網羅性・参考文献除外という2つの具体的な分岐を、
-    process_pdfを経由しない自作データで直接カバーする）。ただし
-    「対訳版レイアウト」「見出し・段落の構造」「数式(KaTeX)描画」
-    「単一の参考文献パターン以外のセクション除外条件」等は依然未検証
-    であり、3テストになっても検証範囲が完全になったわけではない
-    （どこまで自作データのテストケースを増やすかは、費用対効果の
-    判断が必要）。
+    には保証できない、という十分性のリスクを抱えている。後の2テストは
+    このリスクを部分的に軽減する（翻訳網羅性・参考文献除外という2つの
+    具体的な分岐を、process_pdfを経由しない自作データで直接カバー
+    する）。ただし「対訳版レイアウト」「見出し・段落の構造」「数式
+    (KaTeX)描画」「単一の参考文献パターン以外のセクション除外条件」等
+    は、下記の目視チェックで別途確認するまで、自動テストの範囲外で
+    あることに変わりはない。
 
     なお、Gは1.2.1（process_pdf）自体は検証していない。
     test_translate_and_export_with_mocked_deeplがPASSするために
@@ -631,7 +703,21 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
     fixture経由で再実行されるという、別種の構造上の課題（テストの
     意図と実際の依存関係の不一致）も残っている（対応は見送り済み）。
 
-  目視チェック実施状況: 未実施
+  目視チェック実施状況: 一部実施済み。上記「何を調べているか」の
+    検証範囲を超える4項目のうち、以下の対応状況となった。
+    - 「対訳版レイアウト」「見出し・段落の構造」: sample0.pdf（本番
+      実行、`output/output_sample0/paper_bilingual.pdf`）を人間が
+      直接開いて目視確認し、問題無しと確認済み。
+    - 「単一の参考文献パターン以外のセクション除外条件」: sample0.pdf
+      には参考文献セクションが無いため確認不可能だったが、sample1.pdf
+      （論文フルサイズ、9ページ）を本番実行し、生成された
+      `output/output_sample1/page_06_en.md`と`page_06_ja.md`が完全に
+      一致する（＝参考文献セクションが翻訳されず原文のまま出力される）
+      ことをテキストレベルで確認した上で、`output/output_sample1/
+      paper_bilingual.pdf`を人間が直接開いて目視確認し、問題無しと
+      確認済み。
+    - 「数式(KaTeX)描画」: スイートAの担当範囲のため対象外（未実施の
+      まま。スイートA参照）。
 
   テスト対象（explain.txtの該当関数）:
     - translate_paper.translate_and_export（[0]。Step2〜4のみを
@@ -661,8 +747,7 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
     - test_resolve_physical_page_for_sample3: "cov"/"COV"/"Cover"
       （大文字小文字・短縮形の同一視）、"i"、"xviii"、"55"、"60"と
       いった印刷ページラベルが、sample3.pdfの正しい物理ページ番号へ
-      変換されるか（"55"/"60"は元々"36"/"37"だったが、2026-08-08に
-      スイートFの実データテストと同じ印刷ページラベル55〜60に統一）。
+      変換されるか。
     - test_resolve_physical_page_unknown_label_raises: 存在しない
       ラベル（"zzz"）を指定した場合にエラーになるか。
     - test_resolve_physical_page_without_page_labels_raises: 印刷
@@ -670,11 +755,10 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
     - test_resolve_physical_page_range_matches_previously_verified_pages:
       開始・終了2つのラベル（"36"〜"41"）から物理ページ範囲
       （49〜53）へ正しく変換されるか（ラベルにギャップがあるケース）。
-      ※このテストのみ意図的に"36"〜"41"のまま変更していない。印刷
-      ページ"38"が欠番のため"37"の次が"39"になるという、他のどの
-      テストにも無いギャップ処理の検証がこのテストの本質であり、
-      "55"〜"60"（欠番なし・6ラベル=6物理ページの1:1対応であることを
-      別途確認済み）に置き換えるとその検証価値が失われるため。
+      印刷ページ"38"が欠番のため"37"の次が"39"になるという、他のどの
+      テストにも無いギャップ処理の検証がこのテストの本質のため、
+      "55"〜"60"系（欠番なし・6ラベル=6物理ページの1:1対応）とは
+      あえて異なる値を使い続けている。
 
   検証カテゴリ: ◆実データ・要人間検証（ただしリスクは低め）
     期待値（例:"55"→物理67）は、fitzの`get_label()`が返す印刷ページ
@@ -684,9 +768,9 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
     低い。ただし「読み取った値が本当にそのページの表記と一致するか」
     は、他の実データ系テストと同様、独立検証されてはいない。
 
-  目視チェック実施状況: 実施済み（2026-08-09）。sample3.pdfの物理ページ
-    1・2・16・67・72・49・53の計7箇所を対象に確認した。PDFビューアの
-    ページ番号ボックスはPDFにカスタムページラベルが定義されている場合、
+  目視チェック実施状況: 実施済み。sample3.pdfの物理ページ1・2・16・
+    67・72・49・53の計7箇所を対象に確認した。PDFビューアのページ
+    番号ボックスはPDFにカスタムページラベルが定義されている場合、
     物理インデックスではなくラベルの方を解釈してしまう懸念があった
     ため、resolve_physical_pageと同じ「fitzの0始まり配列インデックス
     （doc[physical_page - 1]）で直接ページを開く」方式を使い、ラベル
@@ -716,10 +800,6 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
       --start-label/--end-label（"55"/"60"）が --chapter より優先して
       解決される（結果(67,72)になる）か（--start/--endが優先される
       のと同じ優先順位になっているか）。
-      （いずれも元は"36"/"41"系の値だったが、2026-08-08にスイートFの
-      実データテストと同じ55〜60系へ統一。具体的な数値の一意性が本質
-      ではなく「優先順位ロジックが正しいか」を検証するテストのため、
-      値の変更による検証価値の低下は無い）
 
   検証カテゴリ: ◆仕様完結型
     sample3.pdfの実際のページ番号（67・"55"等）を入力の材料として
@@ -746,8 +826,7 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
     存在しないPDFパスを指定した場合に、fitz（PyMuPDF）が送出する生の
     FileNotFoundErrorではなく、他の入力エラー（章指定・印刷ページ
     ラベルの解決失敗等）と同じ「分かりやすい日本語メッセージ＋
-    SystemExit」で終了することを検証する、2026-08-08に追加された
-    回帰テストスイート。
+    SystemExit」で終了することを検証する回帰テストスイート。
     - test_require_pdf_exists_raises_for_missing_file: 存在しない
       パス（"input/does_not_exist.pdf"）を渡すと、
       "入力PDFファイルが見つかりません"を含むSystemExitになるか。
@@ -766,43 +845,59 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
 
 
 ----------------------------------------------------------------------
-[K] DeepL実課金統合テスト（sample0.pdf・実際のDeepL呼び出し／1テスト、
-    2026-08-09追加、2026-08-09に対象を置き換え）
+[K] DeepL実課金統合テスト（sample0.pdf・実際のDeepL呼び出し／1テスト）
 ----------------------------------------------------------------------
   該当関数: test_page_ja_md_and_candidate_detection_against_real_deepl
 
-  経緯: 当初はcheck_unprotected_math_survival（狭い「文字=英数字」
-    パターンの生存確認）専用のhard assertionテスト
-    test_check_unprotected_math_survival_against_real_deeplをスイートK
-    として用意していた。しかし
-    (a) 短い記号的な断片をDeepLが誤訳する確率は経験的に低く、真の
-        バグ検出力が低いと見込まれる一方、
-    (b) 全角/半角の表記ゆれ等で誤って警告が出る（false positive）
-        リスクの方が高そうであり、
-    (c) 実行のたびに約1分の追加時間・実課金が発生する
-    ことを踏まえ、費用対効果が低いと判断してこのテストを削除した。
-    代わりに、より広い検出網を持つ
-    find_untranslated_fragment_candidates/
-    report_untranslated_fragment_candidates（math_protection.py参照）
-    の検証を兼ねる現行テストに置き換えた（コードからは完全に削除済み。
-    explain.txtにも同様の経緯を記載）。
-
   何を調べているか:
-    CLAUDE.mdの例外規定（2026-08-09追加、sample0.pdfに限りDeepL実課金
-    呼び出しを許可。対象をpage_XX_ja.md生成・候補検出の検証へ改訂）に
-    基づく、本ファイル内で唯一DeepLをモック化しないテスト。
+    CLAUDE.mdの例外規定（sample0.pdfに限りDeepL実課金呼び出しを
+    許可）に基づく、本ファイル内で唯一DeepLをモック化しないテスト。
     `processed` fixture（sample0.pdf処理済み）を実際にDeepLで翻訳し、
     - write_translated_pagesがpage_01_ja.md/page_02_ja.mdを実際に
       生成し、内容が空でなく日本語文字を含むこと
     - report_untranslated_fragment_candidatesが例外を出さず実行できる
       こと
-    を確認する。検出される候補の個数・内容自体はDeepLの翻訳結果に
-    依存し誤検知も許容するヒューリスティックのためassertしない
-    （2026-08-09の実行では、"x"/"y"/"z"/"t = 1"/"t = 0"/"K"という
-    6件の本物の候補と、"DiT"/"LoRA"/"FLUX"/"(i)"/"(ii)"/"(iii)"という
-    7件の誤検知が確認された。詳細はexplain.txtの
-    1.2.2.2.5 find_untranslated_fragment_candidates参照）。PDF生成
-    （Playwright）は本テストの目的に不要なため実行しない。
+    - 翻訳直後・write_translated_pagesより前に、protect_confirmed_
+      single_letter_leaksを本番と同じ位置で実行し、単体アルファベット
+      の数式変数（"x"/"y"/"z"/"K"）を実際に$...$保護すること（本番の
+      translate_and_exportと同じ経路を再現しているため、これが失敗
+      する＝本番でも同じ問題が起きることを意味する）
+    - page_01/page_02の全translatable unitに対してfind_untranslated_
+      fragment_candidatesを適用し、検出された候補（＝上記の自動保護
+      から漏れた残りの候補）がすべてKNOWN_FALSE_POSITIVE_FRAGMENTS
+      （誤検知）またはKNOWN_LEAKED_MATH_FRAGMENTS（人間確認済みの
+      数式漏れ）のいずれかに含まれること（＝許可リストに無い未知の
+      候補が無いこと）
+    を確認する。この許可リストの中身は、"t = 1"/"t = 0"という2件の
+    本物の数式漏れ（"="を含む複数文字のトークンのため自動保護の対象外）
+    と、"NMS"/"CFG"/"Classifier-Free Guidance (CFG)"/"DiT"/"LoRA"/
+    "FLUX"/"(ODE)"/"(i)"/"(ii)"/"(iii)"という10件の誤検知である
+    （詳細はexplain.txtの1.2.2.2.5 find_untranslated_fragment_
+    candidates・1.2.2.2.7 protect_confirmed_single_letter_leaks参照）。
+    "x"/"y"/"z"/"K"/"γ"は自動保護されるようになったため、この許可
+    リストには含まれない。DeepLの翻訳結果は完全に決定的ではないため、
+    実行のたびに許可リストに無い新しい候補（真の数式漏れとは限らず、
+    誤検知の場合もある）が出現しテストが失敗することがあるが、これは
+    想定内の挙動であり、その都度人間が目視確認して許可リストへ追加
+    する運用とする（CLAUDE.mdのテスト運用規定4参照）。“取りあえず
+    許可リストに足してテストを通す”という運用は本テストの目的を
+    損なうため避けること。PDF生成（Playwright）は本テストの目的に
+    不要なため実行しない。
+
+    既知の限界（裸の数字1文字だけの数式漏れ）: page_02の"from t = 1
+    to 0 with K discrete steps"の"0"のような、"$...$"で保護されず、
+    かつ英字/ギリシャ文字を伴わない裸の数字1つだけの数式漏れは、
+    find_untranslated_fragment_candidates自体が検出できない仕様
+    （1.2.2.2.5の「既知の限界」参照。見出し番号・節番号参照・引用
+    番号等との誤検知を避けるための意図的なトレードオフ）のため、
+    本テストの許可リストチェックの対象にも入らない（検出されないので
+    誤検知にも数式漏れにもならず、単に「見えない」）。この"0"は目視
+    確認で発見済みだが、自動検出の対象外という記録としてのみ
+    KNOWN_LEAKED_MATH_FRAGMENTSには含めていない（含めても自動検出
+    されないため許可リストとしての意味を持たない）。つまり本テストの
+    「フルチェック」は、あくまでfind_untranslated_fragment_
+    candidatesが検出可能な範囲でのフルチェックであり、裸の数字1文字
+    の漏れという既知の盲点は依然として残る。
 
   なぜスイートGに含めなかったか: スイートGは「3テストともDeepL呼び出し
     をmonkeypatchでモック化する」ことがスイート自体の定義の一部になって
@@ -814,22 +909,46 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
   検証カテゴリ: （既存の4カテゴリのいずれにも該当しない、本テスト固有の
     リスク）
     本テストの正しさは、実行するたびに変わりうる外部サービス（DeepL）の
-    実際の応答に依存する。ただし現行テストは「例外を出さず動くか・
-    ファイルが空でないか」という比較的緩い検証にとどめており、旧テスト
-    が抱えていた「表記ゆれによる誤ったFAIL」のリスクは軽減している。
-    実行のたびに本物のDeepL課金が発生する点は変わらない。
+    実際の応答に依存する。候補の内容そのものを許可リストに基づいて
+    assertするため、「DeepLの言い回しが変わるとテストが（コード側の
+    バグが無くても）失敗しうる」という非決定性リスクを、許可リストの
+    運用（人間による随時追加）で吸収する設計である。実行のたびに本物
+    のDeepL課金が発生する点もB〜Jとは異なる。
 
-  目視チェック実施状況: 対象外（自動テストとして2026-08-09に実施・
-    PASS。生成された実際のpage_02_ja.mdの内容は目視確認済みで、
-    "潜在変数zをエッジマップにデコード"「t = 1 から t = 0 まで積分」
-    「K 個の離散ステップ」等、想定通りの内容だった）
+  目視チェック実施状況: 実施済み。page_01_ja.md/page_02_ja.mdの全
+    candidateを対象に、"NMS"（Non-Maximum Suppression）・"CFG"／
+    "Classifier-Free Guidance (CFG)"（同一の略語の表記ゆれ）・"DiT"・
+    "LoRA"・"FLUX"（いずれも固有名詞・略語）・"(ODE)"（Ordinary
+    Differential Equation）・"(i)""(ii)""(iii)"（列挙記号）が数式では
+    ないこと（計10件）、"x"・"y"・"z"・"K"・"t = 1"・"t = 0"・"γ"
+    （"scale γ"）が本物の未保護数式であること（計7件）を、原文PDF・
+    page_XX_en.md/page_XX_ja.mdの突き合わせで確認した。あわせて、
+    $...$保護済みの数式（スイートBで25個と確認済み）と本物の未保護
+    数式7件を合わせた実質的な数式表現の網羅性、および裸の数字1文字
+    （"0"）の既知の検出限界も確認した（上記「既知の限界」参照）。
+
+    この目視確認で「本物の数式漏れ」と判定した7件のうち5件
+    （x/y/z/K/γ）は、wrap_bare_greek_letters・protect_confirmed_
+    single_letter_leaksによる自動保護の対象となったため、find_
+    untranslated_fragment_candidatesではもう検出されなくなった
+    （＝許可リストに残す意味が無くなり削除）。現在KNOWN_LEAKED_MATH_
+    FRAGMENTSに残っているのは、自動保護の対象外である"t = 1"/
+    "t = 0"の2件のみである。目視確認自体の結論（この7件が本物の数式
+    であるという判定）は変わらないが、そのうち5件は「検出して許可
+    リストで容認する」段階から「検出すらされない（保護済みのため）」
+    段階へ進んだ、という変化がある。
 
   テスト対象（explain.txtの該当関数）:
     - md_tag_parser.write_translated_pages（1.2.2.1.3。実際のDeepL
       翻訳結果に対する検証はここが唯一）
     - math_protection.report_untranslated_fragment_candidates /
       find_untranslated_fragment_candidates（1.2.2.2.6 / 1.2.2.2.5。
-      実際のDeepL翻訳結果に対する検証はここが唯一）
+      実際のDeepL翻訳結果に対する検証はここが唯一。本テストが唯一
+      find_untranslated_fragment_candidatesの検出結果そのものを
+      assertする）
+    - math_protection.protect_confirmed_single_letter_leaks
+      （1.2.2.2.7。本番のtranslate_and_exportと同じ位置で、実際の
+      DeepL翻訳結果に対して実行される）
     - deepl_translator.translate_with_deepl（[11]。モック化せず実際に
       呼び出される点が他の全テストと異なる）
 
@@ -848,16 +967,20 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
                                                        analyze_structure,
                                                        split_sentences等,
                                                        build_document,
-                                                       math_protection.protect/restore
-  C 文字列処理ユーティリティ単体テスト       11  仕      split_sentences,
+                                                       math_protection.protect/restore,
+                                                       pdf_text_utils.wrap_bare_
+                                                       greek_letters
+  C 文字列処理ユーティリティ単体テスト       16  仕      split_sentences,
                                                        HEADING_RE/slugify_section_name,
                                                        parse_caption_label,
+                                                       wrap_bare_greek_letters,
                                                        math_protection.find_unprotected_
                                                        math_like_tokens/check_
                                                        unprotected_math_survival/find_
                                                        untranslated_fragment_candidates/
                                                        report_untranslated_fragment_
-                                                       candidates,
+                                                       candidates/protect_confirmed_
+                                                       single_letter_leaks,
                                                        md_tag_parser.write_translated_pages
   D 表キャプション・表画像抽出                4  実      process_pdf,
                                                        analyze_structure,
@@ -880,10 +1003,15 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
   K DeepL実課金統合テスト                    1  外      write_translated_pages,
                                                        report_untranslated_fragment_
                                                        candidates,
+                                                       find_untranslated_fragment_
+                                                       candidates（許可リストに基づく
+                                                       全数チェック）,
+                                                       protect_confirmed_single_letter_
+                                                       leaks（本番と同じ位置で実行）,
                                                        translate_with_deepl（実呼び出し）
   ------------------------------------------------------------------
-  合計                                       48 test_関数
-  （うち8関数がparametrizeにより複数ケースを検証するため、実行時の
+  合計                                       53 test_関数
+  （うち9関数がparametrizeにより複数ケースを検証するため、実行時の
     テストケース総数はこれより多い）
 
   「実」に分類される B・D・E・F（実データ側）・H は、期待値の妥当性が
@@ -895,30 +1023,45 @@ sample0.pdfを対象に「例外が出ないこと（＝ファイルが存在す
 
   「機」に分類されるG（3テスト）は、実データの解釈結果を信用する
   リスクは無いが、代わりに「チェックの粒度が本当に十分か」という
-  別種の検証が必要である。2026-08-09に2テスト追加し（翻訳網羅性・
-  参考文献除外）十分性を部分的に改善したが、対訳版レイアウトは依然
-  未検証であり、今後さらにテストケースを追加する余地が残っている。
+  別種の検証が必要である。翻訳網羅性・参考文献除外の2テストを追加し
+  十分性を部分的に改善したが、対訳版レイアウトそのものの検証は自動
+  テストの範囲外であり（目視確認済み。上記スイートG参照）、今後さらに
+  テストケースを追加する余地が残っている。
 
   数式(KaTeX)描画についてはGの十分性の問題としてではなく、対応する
-  自動テストが存在しないこと自体を独立したスイートAとして2026-08-09に
-  明示した。「人」に分類されるAは、そもそも判定できるtest_関数が無い
-  ため、テストがPASSし続けているかどうかで安心度を測ることができず、
+  自動テストが存在しないこと自体を独立したスイートAとして扱っている。
+  「人」に分類されるAは、そもそも判定できるtest_関数が無いため、
+  テストがPASSし続けているかどうかで安心度を測ることができず、
   数式を含むPDFを生成するたびに人間が目視で確認する運用が必要である。
 
   「外」に分類されるK（1テスト）は、数式(KaTeX)描画とは別種のリスク
   （MinerUの数式検出漏れが、保護されないままDeepLに渡って壊れる可能性）
-  を、唯一DeepLを実課金でモック化せずに検証するテストである。CLAUDE.md
-  の運用規定を2026-08-09に一部緩和して追加したもので、B・D・E・F・Hが
-  「実データの解釈を信用しているか」、Gが「チェックの粒度が十分か」で
-  あるのに対し、Kは「外部サービスの応答が実行のたびに変わりうる」という
-  非決定性そのものがリスクであり、PASSし続けてもコード側の保証には
-  ならず、逆に一時的なDeepL側の言い換えでFAILすることもあり得る。
-  実行のたびに実際のDeepL課金が発生する点もB〜Jとは異なる。
+  を、唯一DeepLを実課金でモック化せずに検証するテストである。B・D・
+  E・F・Hが「実データの解釈を信用しているか」、Gが「チェックの粒度が
+  十分か」であるのに対し、Kは「外部サービスの応答が実行のたびに変わり
+  うる」という非決定性そのものがリスクであり、PASSし続けてもコード側
+  の保証にはならず、逆に一時的なDeepL側の言い換えでFAILすることも
+  あり得る。実行のたびに実際のDeepL課金が発生する点もB〜Jとは異なる。
 
-  なおKは当初、狭い検出パターン（"文字=英数字"）の生存確認をhard
-  assertionで行うテストだったが、2026-08-09に費用対効果が低いと判断し
-  削除、より広い検出網を持つreport_untranslated_fragment_candidates系
-  （page_XX_ja.md生成含む）の実データ検証を兼ねる現行テストに置き換え
-  ている。実際に2026-08-09の実行では、旧来のパターンでは検出できな
-  かった"x"/"y"/"z"/"K"のような未保護の単独変数名が新たに6件検出でき
-  ており、検出率向上という当初の目的は達成された（誤検知7件を含む）。
+  Kは「候補の内容自体はassertしない」緩い検証ではなく、人間確認済みの
+  許可リストに無い未知の候補が出たら失敗する回帰テストとして運用して
+  いる。これは、DeepLの言い回しが変わるとテストが（コード側のバグが
+  無くても）失敗しうるという非決定性リスクを、許可リストの運用（人間
+  による随時追加）で吸収する設計である。
+
+  加えて、検出（許可リストでの容認）から一歩進んで実際に保護まで行う
+  2つの自動保護関数（pdf_text_utils.wrap_bare_greek_letters・
+  math_protection.protect_confirmed_single_letter_leaks）があり、
+  KNOWN_LEAKED_MATH_FRAGMENTSの本来の7件中5件（x/y/z/K/γ）が自動
+  保護されるようになった（残り2件は"t = 1"/"t = 0"のみ）。
+  protect_confirmed_single_letter_leaksは、既存の$...$保護済みスパン
+  の内部を誤って二重に囲むと数式が破損するため、protect/restoreで
+  既存スパンを一時退避してから置換する実装になっている（詳細は
+  explain.txtの1.2.2.2.7参照）。ギリシャ文字の保護はTeXコマンド形式
+  （例:"γ"→"$\gamma$"）に変換して行う（KaTeX本体が生の文字を\gamma
+  のエイリアスとして扱うことはvendor/katex/katex.min.jsの内部定義から
+  確認済みで、動作上は生の文字でもコマンド形式でも等価だが、他の数式
+  スパンとの表記の一貫性のためコマンド形式を採用している）。裸の数字
+  1文字だけの数式漏れ（"0"）は依然として自動検出の対象外という既知の
+  限界が残っており、Kの「フルチェック」はあくまでfind_untranslated_
+  fragment_candidatesが検出可能な範囲に限られる。

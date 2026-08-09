@@ -6,6 +6,10 @@ venv/
 # 出力成果物を除外
 output/
 
+# テスト用サンプルPDF（著作権の都合上リポジトリに含めない。各自
+# input/ 配下に用意してください）
+input/*.pdf
+
 # Pythonのキャッシュを除外
 __pycache__/
 *.pyc

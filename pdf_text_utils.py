@@ -90,6 +90,79 @@ def restore_merged_hyphens(text: str) -> str:
     return "".join(parts)
 
 
+# --- ギリシャ文字の数式保護（2026-08-10追加） ---------------------------------
+#
+# MinerUの数式検出は完全ではなく、"scale γ"のように地の文に単独で出現する
+# ギリシャ文字が$...$で囲まれないことがある（math_protection.py参照）。
+# 英語の地の文にギリシャ文字が実在の単語として使われることは無い
+# （"x"や"K"のような半角英数字1文字とは異なり、実在の英単語・略語との
+# 区別に悩む必要が無い）ため、$...$で保護されていないギリシャ文字は
+# 自動的に数式とみなして保護してよい、と判断できる。
+
+_GREEK_LETTER_RE = re.compile(r"[Α-Ωα-ω]")
+_GREEK_RUN_RE = re.compile(r"[Α-Ωα-ω]+")
+
+# Unicodeのギリシャ文字1文字 → 対応するTeXコマンド名（バックスラッシュ無し）。
+# vendor/katex/katex.min.js（KaTeX 0.16.11）内の記号定義
+# （例: se(...,"γ","\\gamma",...)）から抽出した対応表であり、KaTeXが
+# 生のUnicodeギリシャ文字を扱う際に内部的にエイリアスとして解決している
+# のと同じコマンド名を使う。生の文字のままでもKaTeX上は等価に描画される
+# ことを確認済みだが、他の数式スパン（MinerU由来）がすべてTeXコマンド
+# 形式であることとの一貫性のため、明示的にコマンド形式へ変換する
+# （2026-08-10、ユーザー指示により変更）。
+#
+# 一部の大文字（Α,Β,Ε,Ζ,Η,Ι,Κ,Μ,Ν,Ο,Ρ,Τ,Χ）はラテン文字と同形のため
+# KaTeXに専用コマンドが無い（未定義のTeXコマンドはKaTeXがエラーにする
+# ため、この表に無い文字は変換せず元の文字のまま$...$で囲む）。
+_GREEK_TO_TEX_COMMAND = {
+    "Γ": "Gamma", "Δ": "Delta", "Θ": "Theta", "Λ": "Lambda", "Ξ": "Xi",
+    "Π": "Pi", "Σ": "Sigma", "Υ": "Upsilon", "Φ": "Phi", "Ψ": "Psi", "Ω": "Omega",
+    "α": "alpha", "β": "beta", "γ": "gamma", "δ": "delta", "ε": "varepsilon",
+    "ζ": "zeta", "η": "eta", "θ": "theta", "ι": "iota", "κ": "kappa",
+    "λ": "lambda", "μ": "mu", "ν": "nu", "ξ": "xi", "ο": "omicron",
+    "π": "pi", "ρ": "rho", "ς": "varsigma", "σ": "sigma", "τ": "tau",
+    "υ": "upsilon", "φ": "varphi", "χ": "chi", "ψ": "psi", "ω": "omega",
+}
+
+
+def wrap_bare_greek_letters(text: str) -> str:
+    """$...$で保護されていないギリシャ文字をTeXコマンド形式（例:"γ"→
+    "\\gamma"）に変換した上で$...$に包み、翻訳エンジンから保護する
+    （DeepLに地の文として渡って表記が変質するリスクを防ぐ）。
+
+    既に$...$/$$...$$で保護済みの数式スパン内は対象外とし、二重にラップ
+    しない（restore_merged_hyphensと同じ、_INLINE_MATH_REで数式スパンを
+    避けながら処理する方式）。連続するギリシャ文字（例:"αβ"）は、それぞれ
+    を個別のコマンドに変換して連結する（"\\alpha\\beta"。TeXコマンド名は
+    バックスラッシュで区切られるため、間に空白は不要）。
+
+    Args:
+        text: 変換対象の文字列（MinerUのtext_levelなし本文やキャプション等）。
+
+    Returns:
+        ギリシャ文字をTeXコマンド形式で$...$に包んだ後の文字列。数式
+        スパン部分は元のまま。
+    """
+
+    def char_repl(m: re.Match) -> str:
+        ch = m.group(0)
+        command = _GREEK_TO_TEX_COMMAND.get(ch)
+        return f"\\{command}" if command is not None else ch
+
+    def run_repl(m: re.Match) -> str:
+        converted = _GREEK_LETTER_RE.sub(char_repl, m.group(0))
+        return f"${converted}$"
+
+    parts: list[str] = []
+    last = 0
+    for math_match in _INLINE_MATH_RE.finditer(text):
+        parts.append(_GREEK_RUN_RE.sub(run_repl, text[last:math_match.start()]))
+        parts.append(math_match.group(0))
+        last = math_match.end()
+    parts.append(_GREEK_RUN_RE.sub(run_repl, text[last:]))
+    return "".join(parts)
+
+
 # --- 文分割 ------------------------------------------------------------------
 
 _ABBREVIATIONS = {

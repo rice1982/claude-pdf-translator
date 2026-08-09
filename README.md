@@ -49,19 +49,41 @@
    翻訳結果は、最終PDFとは別に`page_XX_ja.md`（`page_XX_en.md`と同じ
    タグ形式）としても出力されます。PDFをレンダリングせずテキストの
    まま原文と見比べられるので、翻訳内容を目視確認したい場合に使えます。
-   ※ MinerUの数式検出は完全ではなく、"t = 1"のような数式らしき文字列が
-     `$...$`で保護されないまま地の文としてDeepLに渡ることがあります
-     （数式保護の仕組み自体は`math_protection.py`参照）。翻訳のたびに
-     2種類の自動チェックが走ります。
-     (a) "文字=英数字"パターンの断片が翻訳後に消えていないかを確認し、
-         消えていれば[警告]ログを出す
-     (b) 翻訳後の`page_XX_ja.md`に半角のまま残る断片（"z"や"K"のような
-         単独の変数名も含む、より広い検出網）を[情報]ログとして一覧表示する
-     (b)は固有名詞・型番等の誤検知を含みうるヒューリスティックのため、
-     参考情報としてご自身で`page_XX_ja.md`と原本PDFを見比べて判断して
-     ください。いずれも処理は止まりません。詳細は`testExplain.txt`の
-     スイートC・K・explain.txtのmath_protection.py（[10]）を参照して
-     ください。
+
+   MinerUの数式検出は完全ではなく、"t = 1"や単体の変数名（"x"等）、
+   ギリシャ文字（"γ"等）のような数式らしき文字列・記号が`$...$`で
+   保護されないまま地の文に残ることがあります（数式保護の仕組み自体は
+   `math_protection.py`参照）。このうち以下の2種類は自動的に保護されます。
+   - 本文中の孤立したギリシャ文字（例:"scale γ"）: 構造解析の段階で
+     TeXコマンド形式（"$\gamma$"）に変換して保護します。地の文に
+     ギリシャ文字が実在の英単語として使われることは無いため、
+     誤って保護してしまうリスクが低いと判断できます。
+   - 翻訳後も半角のまま生き残った単体アルファベット1文字の変数名
+     （例:"x","K"）: 再翻訳はせず、翻訳直後にen_text/ja_text双方の
+     該当箇所へ直接`$...$`を挿入して保護します。実在の英単語なら
+     通常の翻訳で全角の日本語に置き換わるはずという性質を利用した
+     判定です。
+
+   自動保護できない残りのケース（"DiT"のような固有名詞・略語、
+   "t = 1"のような複数文字のトークン、裸の数字1文字等）については、
+   翻訳のたびに2種類の自動チェックが走ります。
+   (a) "文字=英数字"パターンの断片が翻訳後に消えていないかを確認し、
+       消えていれば[警告]ログを出す
+   (b) 翻訳後の`page_XX_ja.md`に半角のまま残る断片を[情報]ログとして
+       一覧表示する
+   (b)は固有名詞・型番等の誤検知を含みうるヒューリスティックのため、
+   参考情報としてご自身で`page_XX_ja.md`と原本PDFを見比べて判断して
+   ください。いずれも処理は止まりません。
+   ※ 既知の限界: "$...$"で保護されず、かつ英字/ギリシャ文字を伴わない
+     裸の数字1つだけの数式漏れ（例: "...to 0 with K discrete steps"の
+     "0"）は、見出し番号・節番号参照・引用番号との誤検知を避けるため
+     意図的に(b)の検出対象外としており、自動保護もされません。
+   詳細は`testExplain.txt`のスイートC・K・explain.txtのmath_protection.py
+   （[10]）・pdf_text_utils.py（[5]）を参照してください。`test_translator.py`の
+   `test_page_ja_md_and_candidate_detection_against_real_deepl`では、
+   実際のDeepL翻訳結果に対して(b)で検出される候補が、人間確認済みの
+   許可リスト（誤検知／本物の数式漏れ）の範囲内に収まっているかを
+   継続的に検証しています。
 
 3. ページ指定・章指定処理
    長大なPDFや書籍向けに、処理対象の「物理ページ範囲（--start, --end）」、
@@ -109,7 +131,9 @@ venv\Scripts\python -m playwright install chromium
 ```
 
 ※ 数式描画用のKaTeXは `vendor\katex` フォルダにフォント込みで
-  同梱済みのため、追加のダウンロードは不要です。
+  同梱済みのため、追加のダウンロードは不要です（KaTeX本体はMIT
+  ライセンスで配布されており、ライセンス全文は`vendor\katex\LICENSE`
+  を参照してください）。
 
 ### 2-3. DeepL APIキーの設定（必須）
 
@@ -180,6 +204,11 @@ python translate_paper.py <PDFファイルのパス> <出力先ディレクト�
 
 ### 3-3. 実行具体例
 
+※ 本リポジトリには著作権の都合上テスト用サンプルPDFを同梱していません。
+  以下の`sample0.pdf`・`sample3.pdf`はファイル名の例です。お手元の
+  PDF（自身が著作権を保有する、または再配布・処理が許諾されているもの）
+  を`input\`フォルダに配置し、ファイル名を読み替えて実行してください。
+
 - 論文サンプル（2ページ）を実行:
   ```
   venv\Scripts\python translate_paper.py input\sample0.pdf output\sample0
@@ -190,12 +219,12 @@ python translate_paper.py <PDFファイルのパス> <出力先ディレクト�
   venv\Scripts\python translate_paper.py input\sample3.pdf output\sample3_ch1 --chapter 1
   ```
 
-- 書籍（sample3.pdf）の物理ページ 67$301C72 を指定して処理:
+- 書籍（sample3.pdf）の物理ページ 67〜72 を指定して処理:
   ```
   venv\Scripts\python translate_paper.py input\sample3.pdf output\sample3_p67_72 --start 67 --end 72
   ```
 
-- 書籍（sample3.pdf）の印刷ページラベル "55"$301C"60" を指定して処理（物理67$301C72に相当）:
+- 書籍（sample3.pdf）の印刷ページラベル "55"〜"60" を指定して処理（物理67〜72に相当）:
   ```
   venv\Scripts\python translate_paper.py input\sample3.pdf output\sample3_label55_60 --start-label 55 --end-label 60
   ```
@@ -215,9 +244,9 @@ paper_ja.pdf                         … 日本語版のみPDF
 
 ### 3-5. 処理時間の目安
 
-PDF解析（MinerU）はCPU実行のため、1PDFあたり数分$301C十数分程度
+PDF解析（MinerU）はCPU実行のため、1PDFあたり数分〜十数分程度
 かかることがあります（範囲指定・章指定を行うことで大幅に短縮可能です）。
-翻訳・PDF生成はページ数・文数に応じて数十秒$301C数分程度です。
+翻訳・PDF生成はページ数・文数に応じて数十秒〜数分程度です。
 処理中はターミナルに進捗状況（「[DeepL] P1-S5 を翻訳中...」等）が表示されます。
 
 
@@ -226,7 +255,7 @@ PDF解析（MinerU）はCPU実行のため、1PDFあたり数分$301C十数分�
 ### 4-1. 主要ファイル
 
 ```
-pdf_processor.py         … PDF解析パイプラインの起点（MinerU実行$301CMarkdown出力）
+pdf_processor.py         … PDF解析パイプラインの起点（MinerU実行〜Markdown出力）
 pdf_mineru_runner.py     … MinerU実行ラッパー
 pdf_structure_analyzer.py… 構造解析（本文/図表/数式/見出し等への分類・目次解析）
 pdf_text_utils.py        … 文分割・見出し判定・ページラベル変換等のユーティリティ
@@ -241,10 +270,8 @@ pdf_renderer.py          … HTML/CSS + Playwright + KaTeXによるPDF生成
 katex_assets.py          … 数式描画用KaTeXアセットの読み込み
 translation_models.py    … 翻訳・PDF生成パイプライン共通のデータ構造
 
-vendor\katex\             … PDF内で数式を描画するためのKaTeX本体・フォント一式
-input\sample0.pdf         … 動作確認・軽量テスト用サンプルPDF（論文抜粋）
-input\sample1.pdf         … 動作確認用サンプルPDF（論文フルサイズ）
-input\sample3.pdf         … 大型書籍テスト用サンプルPDF
+vendor\katex\             … PDF内で数式を描画するためのKaTeX本体・フォント一式（MITライセンス。vendor\katex\LICENSE参照）
+input\                    … 処理対象PDFの配置先（著作権の都合上、サンプルPDFは同梱していません。各自ご用意ください）
 ```
 
 ### 4-2. 開発者向け設計ドキュメント

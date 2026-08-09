@@ -14,6 +14,7 @@ from math_protection import (
     find_unprotected_math_like_tokens,
     normalize as normalize_math,
     protect,
+    protect_confirmed_single_letter_leaks,
     report_untranslated_fragment_candidates,
     restore,
 )
@@ -32,6 +33,7 @@ from pdf_page_label_resolver import (
 )
 from pdf_processor import process_pdf, split_sentences
 from pdf_structure_analyzer import analyze_structure
+from pdf_text_utils import wrap_bare_greek_letters
 import translate_paper
 from translate_paper import resolve_page_range, translate_and_export
 from translation_models import DocUnit
@@ -199,7 +201,15 @@ def test_all_three_equations_are_detected_with_latex(processed):
 
 def test_inline_math_is_wrapped_in_dollar_signs(processed):
     """文中に埋め込まれたインライン数式が、MinerUの数式認識により$...$で
-    構造化されているか。"""
+    構造化されているか。
+
+    ここでassertしているのは2箇所の固定例のみの回帰用spot checkである
+    （DeepL APIキーが無くても実行できる、無課金・高速なチェック）。
+    page全体を対象にした網羅的なチェック（ギリシャ文字等、保護されて
+    いない数式の全数検出）は、DEEPL_API_KEY設定時のみ実行される
+    スイートKのtest_page_ja_md_and_candidate_detection_against_real_
+    deeplが担う（2026-08-10、詳細はtestExplain.txtのスイートB/K参照）。
+    """
     page2_text = processed["texts"]["page_02_en.md"]
     assert "$p ( y \\mid x )$" in page2_text
 
@@ -217,14 +227,22 @@ def test_math_protection_round_trips_all_real_inline_math(processed):
     "\\mathbf { I }"の2箇所だけを直接assertしているのに対し、本テストは
     実データに含まれる数式スパンを全数（自作データではなく）対象にする
     ことで、math_protection.pyの直接ユニットテストが無かったギャップ
-    （旧・testExplain.txtスイートA参照）を、実データの範囲で補う。"""
+    （旧・testExplain.txtスイートA参照）を、実データの範囲で補う。
+
+    2026-08-10、pdf_structure_analyzer._handle_text_item等が
+    wrap_bare_greek_letters（pdf_text_utils.py）を経由するようになり、
+    "scale γ"のように$...$で保護されていなかったギリシャ文字が構造解析
+    段階で自動的に$γ$として保護されるようになった。これによりpage_02の
+    数式スパン数が24個から25個に増えている（詳細は下記assertのコメント
+    参照）。"""
     text = processed["texts"]["page_02_en.md"]
 
     protected, spans = protect(text)
-    # page_02_en.mdに実際に含まれる数式スパン数（インライン21+ディスプレイ3）。
-    # MinerUの数式検出結果が変われば変化しうる値のため、変化した場合は
-    # 数式検出の挙動が変わっていないか確認すること。
-    assert len(spans) == 24
+    # page_02_en.mdに実際に含まれる数式スパン数（インライン22+ディスプレイ3。
+    # 2026-08-10、wrap_bare_greek_lettersによる"$γ$"の自動保護が加わり
+    # 21から22に増えた）。MinerUの数式検出結果が変われば変化しうる値の
+    # ため、変化した場合は数式検出の挙動が変わっていないか確認すること。
+    assert len(spans) == 25
     # プレースホルダ置換後のテキストに数式デリミタ$が一切残っていないこと
     # （＝検出された数式スパンがDeepLへの翻訳リクエストから完全に
     # 除外されることの確認）
@@ -321,6 +339,34 @@ def test_parse_caption_label(text, expected):
 @pytest.mark.parametrize(
     "text,expected",
     [
+        # 地の文に単独で出現するギリシャ文字は、実在の英単語と衝突しない
+        # ため自動的に$...$で保護してよい（2026-08-10追加）。TeXコマンド
+        # 形式（例:"γ"→"\gamma"）に変換した上で保護する（2026-08-10、
+        # 他の数式スパン（MinerU由来）との表記の一貫性のためユーザー
+        # 指示により変更。KaTeX上は生の文字でも等価に描画されることを
+        # 確認済みだが、明示的にコマンド形式へ統一する）。
+        ("we control edge density via scale γ (Sec. 2.4).", "we control edge density via scale $\\gamma$ (Sec. 2.4)."),
+        # 複数のギリシャ文字が連続する場合は1つの数式スパンとしてまとめ、
+        # それぞれ個別のコマンドに変換して連結する。
+        ("with schedule αβ decay", "with schedule $\\alpha\\beta$ decay"),
+        # 既に$...$で保護済みのギリシャ文字（例: LaTeXの\gammaではなく
+        # 直接埋め込まれた文字）は二重にラップ・変換しない。
+        ("already protected $γ$ here", "already protected $γ$ here"),
+        # ギリシャ文字が無ければ何も変化しない。
+        ("no greek letters here at all.", "no greek letters here at all."),
+        # ラテン文字と同形の大文字ギリシャ文字（例:"Α"=Alpha）はKaTeXに
+        # 専用コマンドが無いため、変換せず元の文字のまま$...$で囲む。
+        ("value Α here", "value $Α$ here"),
+    ],
+)
+def test_wrap_bare_greek_letters(text, expected):
+    """未保護のギリシャ文字が$...$で自動的に囲まれるかの単体テスト。"""
+    assert wrap_bare_greek_letters(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
         ("We integrate from t = 1 to t = 0.", ["t = 1", "t = 0"]),
         ("$t = 1$ is protected by dollar signs.", []),
         ("No math-like pattern here at all.", []),
@@ -390,6 +436,10 @@ def test_check_unprotected_math_survival_skips_non_translatable_units():
         ("K個の離散ステップを用いて", ["K"]),
         ("条件付き生成 $p ( y \\mid x )$ として定式化し", []),  # 保護済み数式は候補にならない
         ("これは完全に日本語だけの文です。", []),
+        # ギリシャ文字も、半角英数字と同様にDeepLが翻訳せず残す数式記号の
+        # ため検出対象に含む（実際のDeepL翻訳結果で確認された表記。
+        # 2026-08-10追加）。
+        ("推論時にはスケールγを用いた分類器フリーガイダンスによって", ["γ"]),
     ],
 )
 def test_find_untranslated_fragment_candidates(ja_text, expected):
@@ -430,6 +480,87 @@ def test_report_untranslated_fragment_candidates_skips_non_translatable_units():
         )
     ]
     assert report_untranslated_fragment_candidates(units, log=lambda _msg: None) == []
+
+
+def test_protect_confirmed_single_letter_leaks_wraps_matching_occurrences():
+    """未保護の単体アルファベット（例:"z"）が、en_text・ja_text双方の
+    同じ箇所で$...$に置き換わるか（2026-08-10追加）。DeepLへの再翻訳は
+    行わないため、テスト内でtranslate_with_deeplは一切呼ばない。"""
+    units = [
+        DocUnit(
+            tag="P1-S1-body-S1",
+            kind="body_sentence",
+            page=1,
+            en_text="We decode a latent z back to an edge map.",
+            ja_text="潜在変数zをエッジマップにデコードする。",
+            translatable=True,
+        )
+    ]
+    messages = protect_confirmed_single_letter_leaks(units, log=lambda _msg: None)
+    assert len(messages) == 1
+    assert "'z'" in messages[0]
+    assert units[0].en_text == "We decode a latent $z$ back to an edge map."
+    assert units[0].ja_text == "潜在変数$z$をエッジマップにデコードする。"
+
+
+def test_protect_confirmed_single_letter_leaks_does_not_touch_existing_math_spans():
+    """既に$...$で保護済みの数式スパンの内部にある同名の文字（例:
+    "$p ( y \\mid x )$"内の"y"/"x"）を、二重に$で囲んで壊さないことを
+    確認する回帰テスト（2026-08-10、実データで見つかった不具合の修正）。
+    保護済みスパンの外にある同じ文字（standaloneの"x"）は通常通り保護
+    されること、既存スパン自体は一切変化しないことの両方を検証する。"""
+    units = [
+        DocUnit(
+            tag="P2-S6-2.1.preliminaries-S1",
+            kind="body_sentence",
+            page=2,
+            en_text="Given input image x, we formulate it as $p ( y \\mid x )$.",
+            ja_text="入力画像xが与えられたとき、$p ( y \\mid x )$として定式化する。",
+            translatable=True,
+        )
+    ]
+    messages = protect_confirmed_single_letter_leaks(units, log=lambda _msg: None)
+    assert len(messages) == 1
+    assert "'x'" in messages[0]
+    assert units[0].en_text == "Given input image $x$, we formulate it as $p ( y \\mid x )$."
+    assert units[0].ja_text == "入力画像$x$が与えられたとき、$p ( y \\mid x )$として定式化する。"
+
+
+def test_protect_confirmed_single_letter_leaks_skips_multi_char_tokens():
+    """"DiT"のような複数文字のトークンは、単体アルファベットではないため
+    保護されず、en_text/ja_textが変化しないことを確認する。"""
+    units = [
+        DocUnit(
+            tag="P2-FIG1-CAPTION-S3",
+            kind="caption_sentence",
+            page=2,
+            en_text="a frozen DiT-based foundation model",
+            ja_text="凍結されたDiTベースのファウンデーションモデル",
+            translatable=True,
+        )
+    ]
+    original_en, original_ja = units[0].en_text, units[0].ja_text
+    messages = protect_confirmed_single_letter_leaks(units, log=lambda _msg: None)
+    assert messages == []
+    assert units[0].en_text == original_en
+    assert units[0].ja_text == original_ja
+
+
+def test_protect_confirmed_single_letter_leaks_skips_non_translatable_units():
+    """翻訳対象外のunitは、単体アルファベットが残っていても保護しないか。"""
+    units = [
+        DocUnit(
+            tag="P1-EQ1-LATEX",
+            kind="equation_latex",
+            page=1,
+            en_text="z",
+            ja_text="z",
+            translatable=False,
+        )
+    ]
+    original_en = units[0].en_text
+    assert protect_confirmed_single_letter_leaks(units, log=lambda _msg: None) == []
+    assert units[0].en_text == original_en
 
 
 @pytest.fixture(scope="module")
@@ -851,19 +982,80 @@ def test_translate_and_export_excludes_references_section(tmp_path, monkeypatch)
     )
 
 
+# Suite K（test_page_ja_md_and_candidate_detection_against_real_deepl）の
+# 未知候補チェックで使う許可リスト（2026-08-10追加）。sample0.pdfの
+# page_01/page_02を実際にDeepLで翻訳し、find_untranslated_fragment_
+# candidatesが検出した全候補を人間が目視確認した結果を記録したもの。
+#
+# ここに無い新しい候補が見つかった場合はテストが失敗する。その候補を
+# 実際のpage_XX_ja.md・原文PDFで目視確認した上で、
+#   (a) 固有名詞・略語・列挙記号など数式ではないもの
+#       → KNOWN_FALSE_POSITIVE_FRAGMENTSへ追加
+#   (b) $...$で保護されていない本物の数式
+#       → KNOWN_LEAKED_MATH_FRAGMENTSへ追加（可能ならMinerU/analyze_
+#         structure側での$...$保護も検討する）
+# のどちらかに追加すること。単にリストに追加するだけでテストを通す
+# ことが目的化しないよう注意（人間が確認した記録として運用する）。
+KNOWN_FALSE_POSITIVE_FRAGMENTS = {
+    "NMS",  # 略語（Non-Maximum Suppression）。P1-S16。
+    "CFG",  # 略語（Classifier-Free Guidance）。P1-S32。
+    "Classifier-Free Guidance (CFG)",  # 略語の展開形。P1-S32。DeepLが
+    # 略語をそのまま残す代わりに正式名称＋略語をまとめて残すことがある
+    # （言い回しの揺れ。2026-08-10、再実行時に新たに確認）。
+    "DiT",  # 固有名詞（モデル名）。P2-FIG1-CAPTION-S3。
+    "LoRA",  # 固有名詞（手法名）。P2-FIG1-CAPTION-S3。
+    "FLUX",  # 固有名詞（モデル名）。P2-S13。
+    "(ODE)",  # 略語（Ordinary Differential Equation）。P2-S7。
+    "(i)", "(ii)", "(iii)",  # 列挙記号。P2-S4。
+}
+KNOWN_LEAKED_MATH_FRAGMENTS = {
+    "t = 1", "t = 0",  # P2-S7。積分区間の端点（"="を含む複数文字の
+    # トークンのため、単体アルファベット限定のprotect_confirmed_
+    # single_letter_leaksでは自動保護されず、引き続き許可リストで容認）。
+}
+# 注1: "γ"（P2-FIG1-CAPTION-S3の"scale γ"）は当初ここに含めていたが、
+# 2026-08-10にpdf_text_utils.wrap_bare_greek_lettersを追加し、構造解析
+# 段階でギリシャ文字を自動的に$...$保護するようにしたため、find_
+# untranslated_fragment_candidatesではもう検出されなくなった（許可リスト
+# チェックの対象外＝リストに残す意味が無いため削除）。
+#
+# 注2: "x"/"y"/"z"/"K"（単体の半角アルファベット）も同様に、2026-08-10に
+# math_protection.protect_confirmed_single_letter_leaksを追加し、翻訳後に
+# 半角のまま生き残った単体アルファベットをen_text/ja_text双方で直接
+# $...$保護するようにしたため、検出されなくなった（許可リストから削除）。
+# ギリシャ文字・単体アルファベットはいずれも「実在の英単語との衝突が
+# 起きにくい」という共通の性質を利用した自動保護だが、"DiT"/"NMS"の
+# ような複数文字のトークンは実在の固有名詞・略語と区別できないため、
+# 引き続き検出のみ・許可リストでの容認とする（詳細はpdf_text_utils.pyの
+# wrap_bare_greek_letters、math_protection.pyのprotect_confirmed_
+# single_letter_leaksのdocstring参照）。
+
+
 def test_page_ja_md_and_candidate_detection_against_real_deepl(processed, tmp_path):
     """CLAUDE.mdの例外規定（2026-08-09、sample0.pdf限定でDeepL実課金
     呼び出しを許可）に従い、他のテストと異なりDeepLをモック化せず実際に
-    呼び出す。write_translated_pagesによるpage_XX_ja.md生成と、
-    report_untranslated_fragment_candidatesによる未検出の数式らしき
-    候補検出が、実際のDeepL翻訳結果に対しても例外を出さず機能するかを
-    検証する。
+    呼び出す。write_translated_pagesによるpage_XX_ja.md生成に加え、
+    2026-08-10より、page_01/page_02全体を対象にした未保護数式のフル
+    チェックも行う。翻訳直後にprotect_confirmed_single_letter_leaksで
+    単体アルファベットの数式変数（"x"/"y"/"z"/"K"）を自動保護する処理も
+    本番と同じ位置で実行するため、これらは以降のフルチェックでは候補
+    として検出されない（詳細は下記KNOWN_LEAKED_MATH_FRAGMENTSの注2）。
 
-    DeepLの翻訳結果は完全に決定的ではなく、候補検出はそもそも固有名詞
-    由来の誤検知を許容するヒューリスティックのため、検出される候補の
-    個数・内容そのものはassertしない（それをやりたい場合は出力された
-    page_02_ja.mdを人間が目視確認すること）。PDF生成（Playwright）は
-    本テストの目的に不要なため実行しない。
+    test_inline_math_is_wrapped_in_dollar_signs（スイートB）が"$p ( y
+    \\mid x )$"等2箇所の固定例だけをspot checkしているのに対し、本テストは
+    実際のDeepL翻訳結果からfind_untranslated_fragment_candidatesで
+    全候補を洗い出し、下記KNOWN_FALSE_POSITIVE_FRAGMENTS /
+    KNOWN_LEAKED_MATH_FRAGMENTS という人間確認済みの許可リストに無い
+    未知の候補が出現していないかを確認する、page全体を対象にした回帰
+    テストである。
+
+    ただしDeepLの翻訳結果は完全に決定的ではなく、言い回しの変化により
+    許可リストに無い新しい候補（真の数式漏れとは限らず、誤検知の場合も
+    ある）が出現しテストが失敗することがある。その場合は本テストの直前
+    に定義された2つの許可リストのdocstringに従い、目視確認の上でどちらか
+    に追加すること（“取りあえず許可リストに足してテストを通す”という
+    運用は本テストの目的を損なうため避けること）。PDF生成（Playwright）
+    は本テストの目的に不要なため実行しない。
     """
     load_dotenv()
     if os.environ.get("DEEPL_API_KEY") is None:
@@ -879,6 +1071,12 @@ def test_page_ja_md_and_candidate_detection_against_real_deepl(processed, tmp_pa
 
     translate_with_deepl(units, os.environ["DEEPL_API_KEY"], document_context, log=lambda _msg: None)
 
+    # 本番のtranslate_and_exportと同じ位置（翻訳直後・write_translated_
+    # pagesの前）で、単体アルファベットの数式変数を自動保護する
+    # （2026-08-10追加。再翻訳はしない後処理のため、ここで実行しても
+    # 追加のDeepL課金は発生しない）。
+    protect_confirmed_single_letter_leaks(units, log=lambda _msg: None)
+
     ja_output_dir = tmp_path / "real_deepl_ja_output"
     ja_output_dir.mkdir()
     written = write_translated_pages(units, ja_output_dir)
@@ -890,9 +1088,27 @@ def test_page_ja_md_and_candidate_detection_against_real_deepl(processed, tmp_pa
         has_japanese = any("぀" <= ch <= "ヿ" or "一" <= ch <= "鿿" for ch in text)
         assert has_japanese, f"{path} に日本語文字が見つからない（翻訳が反映されていない可能性がある）"
 
-    # 例外を出さず最後まで実行できることを確認する（候補の内容自体は
-    # 誤検知を許容するヒューリスティックのためassertしない）。
+    # 例外を出さず最後まで実行できることを確認する（ログ出力自体は
+    # 下記の許可リストチェックとは別に、本番の実行経路がそのまま
+    # 動くことの確認として残す）。
     report_untranslated_fragment_candidates(units, log=lambda _msg: None)
+
+    # page全体（全translatable unit）を対象に、未知の候補が無いかを
+    # 確認する（2026-08-10追加。フルチェックの本体）。
+    known = KNOWN_FALSE_POSITIVE_FRAGMENTS | KNOWN_LEAKED_MATH_FRAGMENTS
+    unexpected: dict[str, list[str]] = {}
+    for unit in units:
+        if not unit.translatable:
+            continue
+        new_tokens = [t for t in find_untranslated_fragment_candidates(unit.ja_text) if t not in known]
+        if new_tokens:
+            unexpected[unit.tag] = new_tokens
+    assert not unexpected, (
+        "許可リストに無い未知の候補が見つかりました。実際のpage_XX_ja.md・"
+        "原文PDFで目視確認の上、誤検知ならKNOWN_FALSE_POSITIVE_FRAGMENTSへ、"
+        "本物の数式漏れならKNOWN_LEAKED_MATH_FRAGMENTSへ追加してください: "
+        f"{unexpected}"
+    )
 
 
 @pytest.mark.parametrize(

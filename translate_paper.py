@@ -26,7 +26,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from deepl_translator import TranslationBackendError, translate_with_deepl
-from math_protection import check_unprotected_math_survival, report_untranslated_fragment_candidates
+from math_protection import (
+    check_unprotected_math_survival,
+    protect_confirmed_single_letter_leaks,
+    report_untranslated_fragment_candidates,
+)
 from math_protection import normalize as normalize_math
 from md_tag_parser import build_document_context, exclude_references_section, parse_output_dir, write_translated_pages
 from pdf_chapter_resolver import ChapterResolutionError, resolve_chapter_page_range
@@ -81,6 +85,10 @@ def translate_and_export(output_dir: str | Path) -> list[Path]:
     warnings = check_unprotected_math_survival(units, log=_log)
     if warnings:
         _log(f"[数式チェック] 未保護の数式らしき文字列に関する警告が{len(warnings)}件あります（上記参照）。")
+
+    protected_letters = protect_confirmed_single_letter_leaks(units, log=_log)
+    if protected_letters:
+        _log(f"[数式チェック] 単体アルファベットの数式変数を{len(protected_letters)}件、自動的に$...$で保護しました（上記参照）。")
 
     write_translated_pages(units, output_dir)
 
