@@ -100,6 +100,35 @@ def parse_output_dir(output_dir: Path) -> list[DocUnit]:
     return units
 
 
+def write_translated_pages(units: list[DocUnit], output_dir: Path) -> list[Path]:
+    """翻訳済み（ja_text設定済み）のunitsを、page_*_en.mdと同じタグ形式で
+    page_*_ja.mdとして書き出す（2026-08-09追加）。
+
+    parse_page_fileの逆変換にあたる。翻訳結果を人間が目視確認しやすく
+    する（PDFをレンダリングせずテキストのまま原文と見比べられる）ほか、
+    未保護の数式らしき断片を検出する後続処理（math_protection.py参照）
+    の入力としても使う。
+    """
+    output_dir = Path(output_dir)
+    pages: dict[int, list[DocUnit]] = {}
+    for unit in units:
+        pages.setdefault(unit.page, []).append(unit)
+
+    written: list[Path] = []
+    for page_num in sorted(pages):
+        lines: list[str] = []
+        for unit in pages[page_num]:
+            if unit.kind in ("figure_image", "equation_image"):
+                lines.append(f"![{unit.tag}]({unit.image_rel_path}) [{unit.tag}]")
+                lines.append("")
+            else:
+                lines.append(f"[{unit.tag}] {unit.ja_text}")
+        path = output_dir / f"page_{page_num:02d}_ja.md"
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        written.append(path)
+    return written
+
+
 _REFERENCES_SLUG_RE = re.compile(r"(?:^|\.)references$", re.IGNORECASE)
 
 

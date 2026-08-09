@@ -26,8 +26,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from deepl_translator import TranslationBackendError, translate_with_deepl
+from math_protection import check_unprotected_math_survival, report_untranslated_fragment_candidates
 from math_protection import normalize as normalize_math
-from md_tag_parser import build_document_context, exclude_references_section, parse_output_dir
+from md_tag_parser import build_document_context, exclude_references_section, parse_output_dir, write_translated_pages
 from pdf_chapter_resolver import ChapterResolutionError, resolve_chapter_page_range
 from pdf_page_label_resolver import PageLabelResolutionError, resolve_physical_page_range
 from pdf_processor import process_pdf
@@ -76,6 +77,16 @@ def translate_and_export(output_dir: str | Path) -> list[Path]:
         run_translation(units, document_context)
     except TranslationBackendError as exc:
         raise SystemExit(f"DeepLでの翻訳に失敗しました: {exc}") from exc
+
+    warnings = check_unprotected_math_survival(units, log=_log)
+    if warnings:
+        _log(f"[数式チェック] 未保護の数式らしき文字列に関する警告が{len(warnings)}件あります（上記参照）。")
+
+    write_translated_pages(units, output_dir)
+
+    candidates = report_untranslated_fragment_candidates(units, log=_log)
+    if candidates:
+        _log(f"[数式チェック] 未検出の数式らしき候補が{len(candidates)}件あります（誤検知を含む可能性があります。上記参照）。")
 
     blocks = build_blocks(units, output_dir)
     pdf_paths = render_all_pdfs(blocks, output_dir, log=_log)

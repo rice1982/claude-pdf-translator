@@ -1,10 +1,28 @@
+import os
 import re
 from pathlib import Path
 
 import fitz  # PyMuPDF
 import pytest
+from dotenv import load_dotenv
 
 import pdf_processor
+from deepl_translator import translate_with_deepl
+from math_protection import (
+    check_unprotected_math_survival,
+    find_untranslated_fragment_candidates,
+    find_unprotected_math_like_tokens,
+    normalize as normalize_math,
+    protect,
+    report_untranslated_fragment_candidates,
+    restore,
+)
+from md_tag_parser import (
+    build_document_context,
+    exclude_references_section,
+    parse_output_dir,
+    write_translated_pages,
+)
 from pdf_chapter_resolver import ChapterResolutionError, parse_chapter_spec, resolve_chapter_page_range
 from pdf_models import HeadingElement, TextBlockElement
 from pdf_page_label_resolver import (
@@ -16,6 +34,7 @@ from pdf_processor import process_pdf, split_sentences
 from pdf_structure_analyzer import analyze_structure
 import translate_paper
 from translate_paper import resolve_page_range, translate_and_export
+from translation_models import DocUnit
 
 # テスト用サンプルのパス
 SAMPLE_PDF_PATH = Path("input/sample0.pdf")
@@ -189,6 +208,35 @@ def test_inline_math_is_wrapped_in_dollar_signs(processed):
     assert "\\mathbf { I }" in page2_text
 
 
+def test_math_protection_round_trips_all_real_inline_math(processed):
+    """page_02_en.md（sample0.pdf）に実際に含まれる全てのインライン数式・
+    ディスプレイ数式スパンが、math_protection.protect/restoreのラウンド
+    トリップで（\\textless/\\textgreaterの正規化を除き）壊れず復元されるか。
+
+    test_inline_math_is_wrapped_in_dollar_signsが"$p ( y \\mid x )$"と
+    "\\mathbf { I }"の2箇所だけを直接assertしているのに対し、本テストは
+    実データに含まれる数式スパンを全数（自作データではなく）対象にする
+    ことで、math_protection.pyの直接ユニットテストが無かったギャップ
+    （旧・testExplain.txtスイートA参照）を、実データの範囲で補う。"""
+    text = processed["texts"]["page_02_en.md"]
+
+    protected, spans = protect(text)
+    # page_02_en.mdに実際に含まれる数式スパン数（インライン21+ディスプレイ3）。
+    # MinerUの数式検出結果が変われば変化しうる値のため、変化した場合は
+    # 数式検出の挙動が変わっていないか確認すること。
+    assert len(spans) == 24
+    # プレースホルダ置換後のテキストに数式デリミタ$が一切残っていないこと
+    # （＝検出された数式スパンがDeepLへの翻訳リクエストから完全に
+    # 除外されることの確認）
+    assert "$" not in protected
+
+    restored = restore(protected, spans)
+    # \textless/\textgreaterの正規化（KaTeXが解釈できないMinerU由来の
+    # エスケープの置換）以外は、元テキストと完全に一致すること
+    expected = text.replace("\\textless", "<").replace("\\textgreater", ">")
+    assert restored == expected
+
+
 def test_header_and_footer_noise_excluded(processed):
     """arXiv IDなどのノイズが本文に含まれていないか。"""
     full_text = "\n".join(processed["texts"].values())
@@ -270,6 +318,120 @@ def test_parse_caption_label(text, expected):
     assert pdf_processor._parse_caption_label(text) == expected
 
 
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("We integrate from t = 1 to t = 0.", ["t = 1", "t = 0"]),
+        ("$t = 1$ is protected by dollar signs.", []),
+        ("No math-like pattern here at all.", []),
+        ("K discrete steps (no equals sign, not detected).", []),
+    ],
+)
+def test_find_unprotected_math_like_tokens(text, expected):
+    """$...$で保護されていない"文字=英数字"パターンの検出テスト。"""
+    assert find_unprotected_math_like_tokens(text) == expected
+
+
+def test_check_unprotected_math_survival_warns_when_token_missing():
+    """未保護の数式らしき文字列が翻訳後に消えている場合、警告が出るか。"""
+    units = [
+        DocUnit(
+            tag="P1-S1-intro-S1",
+            kind="body_sentence",
+            page=1,
+            en_text="We integrate from t = 1 to t = 0.",
+            ja_text="ノイズから清潔な状態まで積分する。",  # t = 1 / t = 0 が消えている
+            translatable=True,
+        )
+    ]
+    warnings = check_unprotected_math_survival(units, log=lambda _msg: None)
+    assert len(warnings) == 2
+    assert "t = 1" in warnings[0]
+    assert "t = 0" in warnings[1]
+
+
+def test_check_unprotected_math_survival_silent_when_token_preserved():
+    """未保護の数式らしき文字列が翻訳後も残っていれば、警告が出ないか。"""
+    units = [
+        DocUnit(
+            tag="P1-S1-intro-S1",
+            kind="body_sentence",
+            page=1,
+            en_text="We integrate from t = 1 to t = 0.",
+            ja_text="t = 1からt = 0まで積分する。",  # 両方とも保持されている
+            translatable=True,
+        )
+    ]
+    assert check_unprotected_math_survival(units, log=lambda _msg: None) == []
+
+
+def test_check_unprotected_math_survival_skips_non_translatable_units():
+    """翻訳対象外のunitは、en_text/ja_textが食い違っていても警告しないか。"""
+    units = [
+        DocUnit(
+            tag="P1-EQ1-LATEX",
+            kind="equation_latex",
+            page=1,
+            en_text="t = 1",
+            ja_text="",  # 翻訳対象外なので不一致でも無視されるべき
+            translatable=False,
+        )
+    ]
+    assert check_unprotected_math_survival(units, log=lambda _msg: None) == []
+
+
+@pytest.mark.parametrize(
+    "ja_text,expected",
+    [
+        ("潜在変数zをエッジマップにデコードし、t=1からt=0まで積分する。", ["z", "t=1", "t=0"]),
+        # スペースを挟む"t = 1"も、途中で分断されず1つの断片としてまとまるか
+        # （実際のDeepL翻訳結果で確認された表記。2026-08-09追加）
+        ("誘導された常微分方程式(ODE)を t = 1 から t = 0 まで積分する。", ["(ODE)", "t = 1", "t = 0"]),
+        ("K個の離散ステップを用いて", ["K"]),
+        ("条件付き生成 $p ( y \\mid x )$ として定式化し", []),  # 保護済み数式は候補にならない
+        ("これは完全に日本語だけの文です。", []),
+    ],
+)
+def test_find_untranslated_fragment_candidates(ja_text, expected):
+    """翻訳後も半角のまま残る、未検出の数式らしき候補の検出テスト。"""
+    assert find_untranslated_fragment_candidates(ja_text) == expected
+
+
+def test_report_untranslated_fragment_candidates_logs_info_not_warning():
+    """候補が見つかった場合、[警告]ではなく[情報]としてログ出力されるか。"""
+    units = [
+        DocUnit(
+            tag="P1-S1-intro-S1",
+            kind="body_sentence",
+            page=1,
+            en_text="We decode a latent z back to an edge map.",
+            ja_text="潜在変数zをエッジマップにデコードする。",
+            translatable=True,
+        )
+    ]
+    messages = []
+    result = report_untranslated_fragment_candidates(units, log=messages.append)
+    assert result == messages
+    assert len(result) == 1
+    assert "[情報]" in result[0]
+    assert "z" in result[0]
+
+
+def test_report_untranslated_fragment_candidates_skips_non_translatable_units():
+    """翻訳対象外のunitは、半角断片が残っていても候補にならないか。"""
+    units = [
+        DocUnit(
+            tag="P1-EQ1-LATEX",
+            kind="equation_latex",
+            page=1,
+            en_text="z",
+            ja_text="z",  # 翻訳対象外
+            translatable=False,
+        )
+    ]
+    assert report_untranslated_fragment_candidates(units, log=lambda _msg: None) == []
+
+
 @pytest.fixture(scope="module")
 def processed_sample1(tmp_path_factory):
     """sample1.pdf（表を含む）を一度だけMinerUで処理し、結果を全テストで共有する。"""
@@ -320,7 +482,10 @@ def test_table_captions_sample1(processed_sample1):
     """sample1.pdf（4つの表を含む）で、表キャプションがFIGとは別のTABLEラベルで
     ページ・表番号ごとに文単位で正しく振られているか。"""
     texts = processed_sample1["texts"]
-    _assert_table_caption(texts, "page_04_en.md", 4, 1, ["Quantitative comparisons on BSDS500"])
+    _assert_table_caption(
+        texts, "page_04_en.md", 4, 1,
+        ["Quantitative comparisons on BSDS500", "Our own implementation of GED, as no official code was released."],
+    )
     _assert_table_caption(
         texts, "page_04_en.md", 4, 2,
         ["Quantitative comparison on the BIPED data-set", "column headers denote the percentage"],
@@ -555,6 +720,51 @@ def test_translate_and_export_with_mocked_deepl(processed, monkeypatch):
     has_japanese = any("぀" <= ch <= "ヿ" or "一" <= ch <= "鿿" for ch in ja_text)
     assert has_japanese, "paper_ja.pdfに日本語文字が見つからない（翻訳が行われていない可能性がある）"
 
+    # 2026-08-09追加: translate_and_export内でwrite_translated_pagesが
+    # 呼ばれ、page_XX_en.mdと対になるpage_XX_ja.mdが生成されているか。
+    ja_md_paths = sorted(output_dir.glob("page_*_ja.md"))
+    assert [p.name for p in ja_md_paths] == ["page_01_ja.md", "page_02_ja.md"]
+    for path in ja_md_paths:
+        assert "これはテスト用の日本語訳です。" in path.read_text(encoding="utf-8")
+
+
+def test_write_translated_pages_preserves_tag_format(tmp_path):
+    """write_translated_pagesが、page_XX_en.mdと同じタグ形式でja_textを
+    書き出せているかを、自作unitsで直接検証する（2026-08-09追加）。
+    process_pdf/MinerU/DeepLを一切経由しないため高速。
+    """
+    units = [
+        DocUnit(tag="P1-TITLE", kind="title", page=1, en_text="A Title", ja_text="タイトル"),
+        DocUnit(
+            tag="P1-FIG1",
+            kind="figure_image",
+            page=1,
+            image_rel_path="images/fig_p1_1.png",
+        ),
+        DocUnit(
+            tag="P1-FIG1-CAPTION-S1",
+            kind="caption_sentence",
+            page=1,
+            en_text="Fig. 1: Example.",
+            ja_text="図1: 例。",
+        ),
+        DocUnit(tag="P2-S1-body-S1", kind="body_sentence", page=2, en_text="Body.", ja_text="本文。"),
+    ]
+
+    output_dir = tmp_path / "write_translated_pages_output"
+    output_dir.mkdir()
+    written = write_translated_pages(units, output_dir)
+
+    assert [p.name for p in written] == ["page_01_ja.md", "page_02_ja.md"]
+
+    page1_text = (output_dir / "page_01_ja.md").read_text(encoding="utf-8")
+    assert "[P1-TITLE] タイトル" in page1_text
+    assert "![P1-FIG1](images/fig_p1_1.png) [P1-FIG1]" in page1_text
+    assert "[P1-FIG1-CAPTION-S1] 図1: 例。" in page1_text
+
+    page2_text = (output_dir / "page_02_ja.md").read_text(encoding="utf-8")
+    assert "[P2-S1-body-S1] 本文。" in page2_text
+
 
 def test_translate_and_export_translates_all_translatable_units(tmp_path, monkeypatch):
     """test_translate_and_export_with_mocked_deeplは「日本語が1文字でも
@@ -639,6 +849,50 @@ def test_translate_and_export_excludes_references_section(tmp_path, monkeypatch)
     assert "REFERENCES" in ja_text, (
         "参考文献セクションの見出し自体も翻訳対象から除外されているはず"
     )
+
+
+def test_page_ja_md_and_candidate_detection_against_real_deepl(processed, tmp_path):
+    """CLAUDE.mdの例外規定（2026-08-09、sample0.pdf限定でDeepL実課金
+    呼び出しを許可）に従い、他のテストと異なりDeepLをモック化せず実際に
+    呼び出す。write_translated_pagesによるpage_XX_ja.md生成と、
+    report_untranslated_fragment_candidatesによる未検出の数式らしき
+    候補検出が、実際のDeepL翻訳結果に対しても例外を出さず機能するかを
+    検証する。
+
+    DeepLの翻訳結果は完全に決定的ではなく、候補検出はそもそも固有名詞
+    由来の誤検知を許容するヒューリスティックのため、検出される候補の
+    個数・内容そのものはassertしない（それをやりたい場合は出力された
+    page_02_ja.mdを人間が目視確認すること）。PDF生成（Playwright）は
+    本テストの目的に不要なため実行しない。
+    """
+    load_dotenv()
+    if os.environ.get("DEEPL_API_KEY") is None:
+        pytest.skip("DEEPL_API_KEY が未設定のためスキップ")
+
+    output_dir = processed["output_dir"]
+    units = parse_output_dir(output_dir)
+    for unit in units:
+        if unit.kind in {"title", "heading", "body_sentence", "caption_sentence"}:
+            unit.en_text = normalize_math(unit.en_text)
+    exclude_references_section(units)
+    document_context = build_document_context(units)
+
+    translate_with_deepl(units, os.environ["DEEPL_API_KEY"], document_context, log=lambda _msg: None)
+
+    ja_output_dir = tmp_path / "real_deepl_ja_output"
+    ja_output_dir.mkdir()
+    written = write_translated_pages(units, ja_output_dir)
+
+    assert [p.name for p in written] == ["page_01_ja.md", "page_02_ja.md"]
+    for path in written:
+        text = path.read_text(encoding="utf-8")
+        assert text.strip(), f"{path} が空になっている"
+        has_japanese = any("぀" <= ch <= "ヿ" or "一" <= ch <= "鿿" for ch in text)
+        assert has_japanese, f"{path} に日本語文字が見つからない（翻訳が反映されていない可能性がある）"
+
+    # 例外を出さず最後まで実行できることを確認する（候補の内容自体は
+    # 誤検知を許容するヒューリスティックのためassertしない）。
+    report_untranslated_fragment_candidates(units, log=lambda _msg: None)
 
 
 @pytest.mark.parametrize(

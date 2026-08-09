@@ -135,8 +135,20 @@ def _handle_image_or_table_item(item: dict, item_type: str, images_base, builder
         item.get("image_caption") or item.get("table_caption") or item.get("chart_caption") or []
     )
     captions = [restore_merged_hyphens(c.strip()) for c in raw_captions if c.strip()]
-    labeled_captions = [(c, parse_caption_label(c)) for c in captions]
-    labeled_captions = [(c, lbl) for c, lbl in labeled_captions if lbl is not None]
+
+    # MinerUはtable_caption/image_captionに、キャプション文と脚注（例: 表の
+    # 下にある"*Our own implementation..."等の補足説明）を別要素として並べて
+    # 返すことがある。脚注自体はFig./Tableラベルを持たないため、直前に現れた
+    # ラベル付きキャプションへの継続として結合する（まだ一度もラベルが
+    # 現れていない場合のみ、独立した未ラベル要素として扱う＝従来通り無視）。
+    caption_groups: list[list] = []
+    for c in captions:
+        label = parse_caption_label(c)
+        if label is not None or not caption_groups:
+            caption_groups.append([c, label])
+        else:
+            caption_groups[-1][0] += " " + c
+    labeled_captions = [(text, label) for text, label in caption_groups if label is not None]
     img_path = images_base / item["img_path"]
 
     if len(labeled_captions) >= 2:
