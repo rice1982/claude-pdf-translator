@@ -936,12 +936,25 @@ def test_write_translated_pages_preserves_tag_format(tmp_path):
     output_dir.mkdir()
     written = write_translated_pages(units, output_dir)
 
-    assert [p.name for p in written] == ["page_01_ja.md", "page_02_ja.md"]
+    assert [p.name for p in written] == [
+        "page_01_en.md",
+        "page_01_ja.md",
+        "page_02_en.md",
+        "page_02_ja.md",
+    ]
+
+    page1_en_text = (output_dir / "page_01_en.md").read_text(encoding="utf-8")
+    assert "[P1-TITLE] A Title" in page1_en_text
+    assert "![P1-FIG1](images/fig_p1_1.png) [P1-FIG1]" in page1_en_text
+    assert "[P1-FIG1-CAPTION-S1] Fig. 1: Example." in page1_en_text
 
     page1_text = (output_dir / "page_01_ja.md").read_text(encoding="utf-8")
     assert "[P1-TITLE] タイトル" in page1_text
     assert "![P1-FIG1](images/fig_p1_1.png) [P1-FIG1]" in page1_text
     assert "[P1-FIG1-CAPTION-S1] 図1: 例。" in page1_text
+
+    page2_en_text = (output_dir / "page_02_en.md").read_text(encoding="utf-8")
+    assert "[P2-S1-body-S1] Body." in page2_en_text
 
     page2_text = (output_dir / "page_02_ja.md").read_text(encoding="utf-8")
     assert "[P2-S1-body-S1] 本文。" in page2_text
@@ -1131,12 +1144,20 @@ def test_page_ja_md_and_candidate_detection_against_real_deepl(processed, tmp_pa
     ja_output_dir.mkdir()
     written = write_translated_pages(units, ja_output_dir)
 
-    assert [p.name for p in written] == ["page_01_ja.md", "page_02_ja.md"]
+    assert [p.name for p in written] == [
+        "page_01_en.md",
+        "page_01_ja.md",
+        "page_02_en.md",
+        "page_02_ja.md",
+    ]
     for path in written:
         text = path.read_text(encoding="utf-8")
         assert text.strip(), f"{path} が空になっている"
-        has_japanese = any("぀" <= ch <= "ヿ" or "一" <= ch <= "鿿" for ch in text)
-        assert has_japanese, f"{path} に日本語文字が見つからない（翻訳が反映されていない可能性がある）"
+        if path.name.endswith("_ja.md"):
+            has_japanese = any("぀" <= ch <= "ヿ" or "一" <= ch <= "鿿" for ch in text)
+            assert has_japanese, f"{path} に日本語文字が見つからない（翻訳が反映されていない可能性がある）"
+        else:
+            assert "__MATH" not in text, f"{path} に未復元のプレースホルダが残っている"
 
     # 例外を出さず最後まで実行できることを確認する（ログ出力自体は
     # 下記の許可リストチェックとは別に、本番の実行経路がそのまま

@@ -4,6 +4,76 @@
  explain.txt のどの関数をテストしているか
 ======================================================================
 
+■ テスト実行方法
+
+  本ファイル（およびtest_translator.py）の詳細説明を読む前に、まず
+  「何を実行すればテスト・本実行それぞれが完了するのか」をここに
+  まとめる。各コマンドが具体的に何を検証するかの詳細は、後続の各
+  スイート説明（[A]〜[K]、および末尾の「■ まとめ表」）を参照。
+
+  1. 自動テスト（pytest）
+
+     venv\Scripts\python -m pytest
+
+     test_translator.py内の53個のtest_関数（parametrize展開後86
+     ケース）を一括実行する。CLAUDE.mdの運用規定により、DeepLの
+     実課金呼び出しはスイートKの1テスト
+     （test_page_ja_md_and_candidate_detection_against_real_deepl）
+     を除き全てモック化されている（スイートG参照）。スイートKの
+     テストのみ、.envにDEEPL_API_KEYが設定されている場合に限り実際
+     にDeepL APIを呼び出す（未設定時はpytest.skipで穏やかにスキップ
+     される）。input/sample0.pdf〜sample3.pdfが未配置の場合の挙動は
+     テストにより異なる（詳細は次項「前提（サンプルPDFについて）」
+     参照）。サンプルPDFの準備方法はREADME.md第2章2-4を参照。
+
+  2. 本実行（手動目視確認が必要な項目の確認用、計4コマンド）
+
+     pytestでは検証できない、「実際の出力（Markdown・画像・生成
+     PDF）を人間が目視して確認する必要がある項目」（各スイート末尾
+     の「目視チェック実施状況」欄を参照）を確認するには、以下4つの
+     translate_paper.py本実行が必要になる。いずれも実際にDeepL API
+     を呼び出す（文字数消費・課金が発生する）。出力先はプロジェクト
+     直下のoutputフォルダの下に、コマンドごとの専用フォルダを作る。
+
+     (1) venv\Scripts\python translate_paper.py input\sample0.pdf output\sample0
+         スイートA（sample0.pdfの数式描画）／B（見出し・前付け・
+         ページまたぎ段落・図表PNG切り出し・ヘッダーフッター除外等
+         12項目）／G（対訳版レイアウト）の目視確認対象を生成する。
+
+     (2) venv\Scripts\python translate_paper.py input\sample1.pdf output\sample1
+         スイートA（sample1.pdfの数式描画）／D（sample1.pdfの表4件の
+         キャプション・PNG切り出し）／G（参考文献セクションの翻訳
+         除外）の目視確認対象を生成する。
+
+     (3) venv\Scripts\python translate_paper.py input\sample2.pdf output\sample2
+         スイートD（sample2.pdfの表2件のキャプション・PNG切り出し）
+         の目視確認対象を生成する。
+
+     (4) venv\Scripts\python translate_paper.py input\sample3.pdf output\sample3_label55_60 --start-label 55 --end-label 60
+         スイートF（sample3.pdf物理ページ67〜72＝印刷ページラベル
+         55〜60の番号なし見出し8件）の目視確認対象を生成する。
+         --start-label/--end-labelと--start/--endはこの範囲では
+         等価なため（スイートH参照）どちらか一方でよい。--chapter
+         はこの範囲を含むより広い章全体を処理してしまい、CLAUDE.md
+         の「sample3.pdfは最小限の範囲のみ処理する」という運用規定
+         に反するため使わない。
+
+     なお、スイートE（前付けローマ数字の章スキップ判定）とスイートH
+     （印刷ページラベルの読み取り、test_resolve_physical_page_for_
+     sample3）の目視確認は、本実行の生成物ではなくinput\sample3.pdf
+     そのもの（しおりパネル・実際の印刷ページ）を直接開いて確認する
+     項目であり、対応する本実行コマンドは存在しない。
+
+     各コマンド実行後の目視確認では、生成された出力ファイル・入力
+     PDFに加え、コマンド実行時の標準出力（ターミナルログ）も確認
+     対象に含めること。translate_and_export（translate_paper.py）は
+     未保護の数式らしき候補（math_protection.check_unprotected_
+     math_survival / report_untranslated_fragment_candidates。
+     スイートK参照）を[数式チェック]/[情報]/[警告]としてコンソール
+     に出力するのみで、出力ファイルには保存しないため（詳細は
+     explain.txtの1.2.2.2.5〜1.2.2.2.7参照）。
+
+
 前提: このファイルは explain.txt（プログラム全体構成の説明）とセットで
 読む前提で書かれている。各テストスイートの説明末尾に記載した
 「テスト対象（explain.txtの該当関数）」は、すべて explain.txt 内に

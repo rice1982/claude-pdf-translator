@@ -85,12 +85,17 @@ def build_blocks(units: list[DocUnit], output_dir: Path) -> list[Block]:
                 flush()
                 current_key = key
             current.append(unit)
-        elif unit.kind in ("figure_image", "equation_image"):
+        elif unit.kind == "figure_image":
             flush()
             image_uri = _image_data_uri(output_dir, unit.image_rel_path) if unit.image_rel_path else None
             blocks.append(Block(kind="figure", sentences=[unit], image_data_uri=image_uri))
+        elif unit.kind == "equation_image":
+            continue  # 対応するequation_latexブロックをKaTeXで描画するため画像は出力しない
+            # （2026-08-10変更。MinerUの画像切り出し範囲には\tag{n}の式番号が
+            # 含まれないため、番号を含む正しいLaTeX（equation_latex）側で描画する）
         elif unit.kind == "equation_latex":
-            continue  # 対応するfigureブロックの画像で表示済みのため出力しない
+            flush()
+            blocks.append(Block(kind="equation", sentences=[unit]))
         else:  # unknown
             flush()
             blocks.append(Block(kind="paragraph", sentences=[unit]))
@@ -135,6 +140,9 @@ def _render_bilingual_block(block: Block) -> str:
     if block.kind == "figure":
         parts = [f'<img src="{block.image_data_uri}" alt="{_esc(block.sentences[0].tag)}">']
         return f'<figure>{"".join(parts)}</figure>'
+    if block.kind == "equation":
+        unit = block.sentences[0]
+        return f'<div class="equation">{_esc(unit.en_text)}</div>'
     return ""
 
 
@@ -167,10 +175,12 @@ def _render_mono_block(block: Block, lang: str) -> str:
         unit = block.sentences[0]
         return f"<h{block.level}>{_esc(_sentence_text(unit, lang))}</h{block.level}>"
     if block.kind == "paragraph":
-        text = " ".join(_esc(_sentence_text(u, lang)) for u in block.sentences)
-        return f"<p>{text}</p>"
+        return "".join(f"<p>{_esc(_sentence_text(u, lang))}</p>" for u in block.sentences)
     if block.kind == "figure":
         return f'<figure><img src="{block.image_data_uri}" alt="{_esc(block.sentences[0].tag)}"></figure>'
+    if block.kind == "equation":
+        unit = block.sentences[0]
+        return f'<div class="equation">{_esc(_sentence_text(unit, lang))}</div>'
     return ""
 
 
@@ -189,6 +199,10 @@ def _wrap_html(title: str, body: str, bilingual: bool, lang: str = "ja") -> str:
         table.bilingual td { width: 50%; vertical-align: top; padding: 4pt 8pt; font-size: 10pt; }
         table.bilingual td.en { border-right: 1px solid #ddd; }
         table.bilingual tr { break-inside: avoid; page-break-inside: avoid; }
+        .equation .katex-display > .katex > .katex-html > .tag {
+            position: static;
+            margin-left: 0.5em;
+        }
         table.title-block td { text-align: center; font-size: 15pt; padding: 10pt 8pt; }
         table.heading-block td { font-weight: bold; }
         table.heading-block.level-2 td { font-size: 13pt; }
@@ -220,6 +234,7 @@ def _wrap_html(title: str, body: str, bilingual: bool, lang: str = "ja") -> str:
     color: #1a1a1a;
   }}
   .meta {{ text-align: center; font-size: 9.5pt; color: #444; margin: 2pt 0; }}
+  .equation {{ text-align: center; margin: 10pt 0; break-inside: avoid; page-break-inside: avoid; }}
   figure {{ text-align: center; margin: 12pt 0; break-inside: avoid; page-break-inside: avoid; }}
   figure img {{ max-width: 85%; max-height: 210pt; }}
   {bilingual_css if bilingual else mono_css}

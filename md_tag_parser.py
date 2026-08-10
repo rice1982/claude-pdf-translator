@@ -102,7 +102,12 @@ def parse_output_dir(output_dir: Path) -> list[DocUnit]:
 
 def write_translated_pages(units: list[DocUnit], output_dir: Path) -> list[Path]:
     """翻訳済み（ja_text設定済み）のunitsを、page_*_en.mdと同じタグ形式で
-    page_*_ja.mdとして書き出す（2026-08-09追加）。
+    page_*_ja.mdとして書き出す（2026-08-09追加）。あわせて、翻訳後の
+    後処理（math_protection.protect_confirmed_single_letter_leaks等）で
+    en_textが更新されている場合に備え、page_*_en.mdも現在のen_textで
+    上書きする（2026-08-10追加。従来はja.mdのみ書き出しており、Step1
+    （process_pdf）時点のen.mdが翻訳後の保護処理を反映しないという
+    不一致があったため）。
 
     parse_page_fileの逆変換にあたる。翻訳結果を人間が目視確認しやすく
     する（PDFをレンダリングせずテキストのまま原文と見比べられる）ほか、
@@ -116,16 +121,29 @@ def write_translated_pages(units: list[DocUnit], output_dir: Path) -> list[Path]
 
     written: list[Path] = []
     for page_num in sorted(pages):
-        lines: list[str] = []
+        en_lines: list[str] = []
+        ja_lines: list[str] = []
         for unit in pages[page_num]:
             if unit.kind in ("figure_image", "equation_image"):
-                lines.append(f"![{unit.tag}]({unit.image_rel_path}) [{unit.tag}]")
-                lines.append("")
+                image_line = f"![{unit.tag}]({unit.image_rel_path}) [{unit.tag}]"
+                en_lines.append(image_line)
+                en_lines.append("")
+                ja_lines.append(image_line)
+                ja_lines.append("")
+            elif unit.kind == "equation_latex":
+                en_lines.append(f"[{unit.tag}] {unit.en_text}")
+                en_lines.append("")
+                ja_lines.append(f"[{unit.tag}] {unit.ja_text}")
+                ja_lines.append("")
             else:
-                lines.append(f"[{unit.tag}] {unit.ja_text}")
-        path = output_dir / f"page_{page_num:02d}_ja.md"
-        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        written.append(path)
+                en_lines.append(f"[{unit.tag}] {unit.en_text}")
+                ja_lines.append(f"[{unit.tag}] {unit.ja_text}")
+        en_path = output_dir / f"page_{page_num:02d}_en.md"
+        en_path.write_text("\n".join(en_lines) + "\n", encoding="utf-8")
+        written.append(en_path)
+        ja_path = output_dir / f"page_{page_num:02d}_ja.md"
+        ja_path.write_text("\n".join(ja_lines) + "\n", encoding="utf-8")
+        written.append(ja_path)
     return written
 
 
