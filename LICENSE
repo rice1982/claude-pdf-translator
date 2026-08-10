@@ -1,0 +1,10 @@
+Copyright (c) 2026 rice1982. All Rights Reserved.
+
+This repository is published for reference and demonstration purposes only.
+No permission is granted to use, copy, modify, merge, publish, distribute,
+sublicense, and/or sell copies of this software, in whole or in part,
+without the prior written consent of the copyright holder.
+
+Third-party components bundled in this repository (e.g. `vendor/katex/`)
+remain licensed under their own respective licenses; see the LICENSE file(s)
+within those directories for details.
