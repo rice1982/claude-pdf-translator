@@ -6,10 +6,16 @@ venv/
 # 出力成果物を除外
 output/
 
-# テスト用サンプルPDF（著作権の都合上リポジトリに含めない。各自
-# input/ 配下に用意してください）
-input/*.pdf
+# テスト用サンプルPDFおよび著作権表示等（著作権の都合上リポジトリに
+# 含めない。setup_inputs.pyを実行するか、各自input/配下に用意してください）
+input/*
 
 # Pythonのキャッシュを除外
 __pycache__/
 *.pyc
+
+# pytestのキャッシュを除外
+.pytest_cache/
+
+# Claude Codeのローカル設定を除外
+.claude/
