@@ -1229,6 +1229,12 @@ def _run_real_deepl_full_check(
         run_id: 書き出し先`cache/<run_id>/real_deepl_output/`を決める
             識別子（対象PDFごとに変える。例:"sample0","sample1"）。
     """
+    allowed_run_ids = {"sample0", "sample1"}
+    assert run_id in allowed_run_ids, (
+        f"実DeepLフルチェックはCLAUDE.mdの例外規定によりsample0/sample1限定"
+        f"（run_id={run_id!r}はsample2/sample3等、許可対象外の可能性がある。"
+        f"許可対象を追加する場合はCLAUDE.mdの例外規定を先に更新すること）。"
+    )
     load_dotenv()
     if os.environ.get("DEEPL_API_KEY") is None:
         pytest.skip("DEEPL_API_KEY が未設定のためスキップ")

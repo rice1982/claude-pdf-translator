@@ -77,7 +77,7 @@
      math_survival / report_untranslated_fragment_candidates。
      スイートK参照）を[数式チェック]/[情報]/[警告]としてコンソール
      に出力するのみで、出力ファイルには保存しないため（詳細は
-     explain.txtの1.2.2.2.5〜1.2.2.2.7参照）。
+     explain.txtの1.2.2.6〜1.2.2.8参照）。
 
 
 前提: このファイルは explain.txt（プログラム全体構成の説明）とセットで
@@ -422,7 +422,7 @@ sample0.pdf・sample1.pdf（後者は追加条件付き）に限りDeepLを実�
         MinerU由来の他の数式スパンとの表記の一貫性のため、明示的な
         TeXコマンド形式への変換を採用している）
       - pdf_text_utils.wrap_bare_letter_equals_expressions（構造解析
-        段階、2026-08-12追加。"1文字の変数 = 値"形式の断片（例:
+        段階。"1文字の変数 = 値"形式の断片（例:
         "t = 1"）を、find_unprotected_math_like_tokensと同じ正規表現
         で検出し$...$で囲む。"a = b"という形が実在の英文として自然に
         使われることは無いため、"="を伴う複数文字のトークンでも
@@ -435,9 +435,9 @@ sample0.pdf・sample1.pdf（後者は追加条件付き）に限りDeepLを実�
         性質を利用）
     この3つの自動保護により、"文字=英数字"パターン以外で検出される
     「本物の数式漏れ」候補（x/y/z/K/t=1/t=0/γの7件）は全件自動保護
-    されるようになり、スイートKの許可リスト（KNOWN_LEAKED_MATH_
-    FRAGMENTS）は空集合になっている（自動保護された時点でfind_
-    untranslated_fragment_candidatesの検出対象からも外れるため）。
+    されており、スイートKの許可リスト（KNOWN_LEAKED_MATH_
+    FRAGMENTS）は空集合である（自動保護されているため、find_
+    untranslated_fragment_candidatesの検出対象にも入らない）。
 
     さらにスイートK（test_page_ja_md_and_candidate_detection_against_
     real_deepl）が、page_01/page_02全体のtranslatable unit全てに
@@ -460,7 +460,7 @@ sample0.pdf・sample1.pdf（後者は追加条件付き）に限りDeepLを実�
     意図的に検出対象外としている。この"0"は目視確認で発見済みだが、
     許可リストに追加しても自動検出されないため回帰テストの対象には
     ならず、将来同種の漏れが新たに発生しても機械的には検知できない
-    という限界が依然として残る（詳細はexplain.txtの1.2.2.2.5
+    という限界が依然として残る（詳細はexplain.txtの1.2.2.8.1
     find_untranslated_fragment_candidatesの「既知の限界」、および
     本ファイルのスイートK参照）。
 
@@ -570,7 +570,7 @@ sample0.pdf・sample1.pdf（後者は追加条件付き）に限りDeepLを実�
     - test_protect_confirmed_single_letter_leaks_does_not_touch_existing_math_spans:
       既に$...$で保護済みの数式スパン（例:"$p ( y \mid x )$"）の内部に
       ある同名の文字を、二重に$で囲んで壊さないかを検証する（詳細は
-      explain.txtの1.2.2.2.7 protect_confirmed_single_letter_leaksの
+      explain.txtの1.2.2.7 protect_confirmed_single_letter_leaksの
       「実装上の注意点」参照）。
 
   検証カテゴリ: ◆仕様完結型
@@ -1080,13 +1080,13 @@ sample0.pdf・sample1.pdf（後者は追加条件付き）に限りDeepLを実�
     を確認する。この許可リストの中身は、"NMS"/"CFG"/"Classifier-Free
     Guidance (CFG)"/"DiT"/"LoRA"/"FLUX"/"(ODE)"/"(i)"/"(ii)"/"(iii)"
     という10件の誤検知のみで、KNOWN_LEAKED_MATH_FRAGMENTS（本物の
-    数式漏れ）は現在空集合である（詳細はexplain.txtの1.2.2.2.5
-    find_untranslated_fragment_candidates・1.2.2.2.7 protect_
+    数式漏れ）は空集合である（詳細はexplain.txtの1.2.2.8.1
+    find_untranslated_fragment_candidates・1.2.2.7 protect_
     confirmed_single_letter_leaks参照）。"x"/"y"/"z"/"K"/"γ"に加えて
-    "t = 1"/"t = 0"も自動保護されるようになったため（2026-08-12、
-    wrap_bare_letter_equals_expressions追加）、この許可リストには
-    含まれない。DeepLの翻訳結果は完全に決定的ではないため、
-    実行のたびに許可リストに無い新しい候補（真の数式漏れとは限らず、
+    "t = 1"/"t = 0"も自動保護されており（wrap_bare_letter_equals_
+    expressionsによる）、この許可リストには含まれない。DeepLの翻訳
+    結果は完全に決定的ではないため、実行のたびに許可リストに無い
+    新しい候補（真の数式漏れとは限らず、
     誤検知の場合もある）が出現しテストが失敗することがあるが、これは
     想定内の挙動であり、その都度人間が目視確認して許可リストへ追加
     する運用とする（CLAUDE.mdのテスト運用規定4参照）。“取りあえず
@@ -1098,7 +1098,7 @@ sample0.pdf・sample1.pdf（後者は追加条件付き）に限りDeepLを実�
     to 0 with K discrete steps"の"0"のような、"$...$"で保護されず、
     かつ英字/ギリシャ文字を伴わない裸の数字1つだけの数式漏れは、
     find_untranslated_fragment_candidates自体が検出できない仕様
-    （1.2.2.2.5の「既知の限界」参照。見出し番号・節番号参照・引用
+    （1.2.2.8.1の「既知の限界」参照。見出し番号・節番号参照・引用
     番号等との誤検知を避けるための意図的なトレードオフ）のため、
     本テストの許可リストチェックの対象にも入らない（検出されないので
     誤検知にも数式漏れにもならず、単に「見えない」）。この"0"は目視
@@ -1132,11 +1132,9 @@ sample0.pdf・sample1.pdf（後者は追加条件付き）に限りDeepLを実�
     Differential Equation）・"(i)""(ii)""(iii)"（列挙記号）が数式では
     ないこと（計10件）、"x"・"y"・"z"・"K"・"t = 1"・"t = 0"・"γ"
     （"scale γ"）が本物の未保護数式であること（計7件）を、原文PDF・
-    page_XX_en.md/page_XX_ja.mdの突き合わせで確認した（この時点では
-    いずれも自動保護前だったため許可リストで容認していたが、2026-08-10
-    〜2026-08-12にかけてwrap_bare_greek_letters・wrap_bare_letter_
-    equals_expressions・protect_confirmed_single_letter_leaksを順次
-    追加した結果、7件は全て自動保護されるようになり、現在
+    page_XX_en.md/page_XX_ja.mdの突き合わせで確認した（7件とも
+    wrap_bare_greek_letters・wrap_bare_letter_equals_expressions・
+    protect_confirmed_single_letter_leaksにより自動保護されており、
     KNOWN_LEAKED_MATH_FRAGMENTSは空集合である）。あわせて、$...$
     保護済みの数式（スイートBで27個と確認済み。うちγ/t=1/t=0の3個は
     wrap_bare_greek_letters・wrap_bare_letter_equals_expressions経由
@@ -1153,21 +1151,20 @@ sample0.pdf・sample1.pdf（後者は追加条件付き）に限りDeepLを実�
     （保護済みのため）」段階へ全件が進んだ、という変化がある。
 
   テスト対象（explain.txtの該当関数）:
-    - md_tag_parser.write_translated_pages（1.2.2.1.3。実際のDeepL
+    - md_tag_parser.write_translated_pages（1.2.2.9。実際のDeepL
       翻訳結果に対する検証はここが唯一）
     - math_protection.report_untranslated_fragment_candidates /
-      find_untranslated_fragment_candidates（1.2.2.2.6 / 1.2.2.2.5。
+      find_untranslated_fragment_candidates（1.2.2.8 / 1.2.2.8.1。
       実際のDeepL翻訳結果に対する検証はここが唯一。本テストが唯一
       find_untranslated_fragment_candidatesの検出結果そのものを
       assertする）
     - math_protection.protect_confirmed_single_letter_leaks
-      （1.2.2.2.7。本番のtranslate_and_exportと同じ位置で、実際の
+      （1.2.2.7。本番のtranslate_and_exportと同じ位置で、実際の
       DeepL翻訳結果に対して実行される）
     - deepl_translator.translate_with_deepl（[11]。モック化せず実際に
       呼び出される点が他の全テストと異なる）
 
-  test_page_ja_md_and_candidate_detection_against_real_deepl_sample1
-  （2026-08-12追加）:
+  test_page_ja_md_and_candidate_detection_against_real_deepl_sample1:
     sample1.pdf（表を含む論文フルサイズ、9ページ）に対する同種のフル
     チェック。sample0.pdfはsample1.pdfの最初の2ページを抽出したもの
     であり、本テストはsample0の内容を完全に包含するスーパーセットで
@@ -1185,29 +1182,38 @@ sample0.pdf・sample1.pdf（後者は追加条件付き）に限りDeepLを実�
     および見つかった候補（"P(A, B)"のような確率記法の部分保護）を
     自動保護で解決しようとすると、既に正しく動作している別のケース
     （隣接する独立した数式スパンの結合等）まで動作が変わり、KaTeX
-    描画結果の目視確認範囲が広がるリスクがあると判断し、採用を見送った
-    （2026-08-12）。sample1版と同様、日常の開発ループでは実行しない
+    描画結果の目視確認範囲が広がるリスクがあると判断し、採用を見送った。
+    sample1版と同様、日常の開発ループでは実行しない
     （CLAUDE.mdテスト運用規定3参照）。
 
 
-■ まとめ表（スイート → テスト数 → 検証カテゴリ → 主なテスト対象関数）
+■ まとめ表（スイート → テスト数 → 検証カテゴリ → 工程 → 主なテスト対象関数）
 
   凡例: 仕=◆仕様完結型（検証不要） / 実=◆実データ・要人間検証（正確性）
         / 機=◆機械的チェック・要人間検証（十分性）
         / 人=◆要人間確認（対応する自動テストが無い）
         / 外=外部API依存・非決定的（既存4カテゴリ非該当、スイートK固有）
 
-  A TeX数式描画の目視確認                    0  人      _wrap_html,
+  「工程」列は、explain.txtの「■ 工程」で定義されている(1)〜(6)
+  （ページ範囲決定／PDF解析／構造化・タグ処理／翻訳実行／翻訳後処理／
+  PDF生成）の分類を指す。testExplain.txt内でこの分類を使うのは本表の
+  みで、各スイートの個別説明では登場しない。1つのスイートが複数の
+  工程にまたがる場合は該当するものをすべて記す。(1.0)は
+  `_require_pdf_exists`（mainの入口チェック）を指し、explain.txtの
+  (1)〜(6)のどれにも属さない特別な位置づけである（詳細は両方とも
+  explain.txtの該当箇所を参照）。
+
+  A TeX数式描画の目視確認                    0  人  (6)      _wrap_html,
                                                        load_katex_assets/_inline_css,
                                                        math_protection.normalize
-  B PDF解析パイプライン基本検証             12  実      process_pdf, run_mineru,
+  B PDF解析パイプライン基本検証             12  実  (2)(3)   process_pdf, run_mineru,
                                                        analyze_structure,
                                                        split_sentences等,
                                                        build_document,
                                                        math_protection.protect/restore,
                                                        pdf_text_utils.wrap_bare_
                                                        greek_letters
-  C 文字列処理ユーティリティ単体テスト       16  仕      split_sentences,
+  C 文字列処理ユーティリティ単体テスト       16  仕  (3)(5)   split_sentences,
                                                        HEADING_RE/slugify_section_name,
                                                        parse_caption_label,
                                                        wrap_bare_greek_letters,
@@ -1219,37 +1225,38 @@ sample0.pdf・sample1.pdf（後者は追加条件付き）に限りDeepLを実�
                                                        candidates/protect_confirmed_
                                                        single_letter_leaks,
                                                        md_tag_parser.write_translated_pages
-  D 表キャプション・表画像抽出                4  実      process_pdf,
+  D 表キャプション・表画像抽出                4  実  (2)(3)   process_pdf,
                                                        analyze_structure,
                                                        parse_caption_label,
                                                        build_document
-  E 章指定パース・解決                        7  仕/実   parse_chapter_spec（仕）,
+  E 章指定パース・解決                        7  仕/実 (1)    parse_chapter_spec（仕）,
                                                        resolve_chapter_page_range
                                                        （6/7関数は合成PDFで仕。
                                                        skips_roman_numeral_front_
                                                        matterの1関数のみ実
                                                        sample3.pdf）
-  F 見出しへの合成章ID付与                    2  仕/実   analyze_structure（両方から）,
+  F 見出しへの合成章ID付与                    2  仕/実 (2)(3) analyze_structure（両方から）,
                                                        process_pdf, run_mineru,
                                                        build_document（実データ側のみ）
-  G 翻訳・PDF生成の統合（DeepLモック）        3  機      translate_and_export,
+  G 翻訳・PDF生成の統合（DeepLモック）        3  機  (3)(4)(5)(6)
+                                                       translate_and_export,
                                                        md_tag_parser群,
                                                        translate_with_deepl,
                                                        build_blocks/render_all_pdfs
-  H 印刷ページラベル解決                      4  仕/実   resolve_physical_page,
+  H 印刷ページラベル解決                      4  仕/実 (1)    resolve_physical_page,
                                                        resolve_physical_page_range
                                                        （3/4関数は合成PDFで仕。
                                                        for_sample3の1関数
                                                        （7ケース）のみ実
                                                        sample3.pdf。リスクは
                                                        低め）
-  I ページ範囲決定ロジックの優先順位          2  仕/実   resolve_page_range
+  I ページ範囲決定ロジックの優先順位          2  仕/実 (1)    resolve_page_range
                                                        （conflicting_start系は
                                                        仕。prefers_page_label_
                                                        over_chapterのみ実
                                                        sample3.pdf）
-  J 入力PDFファイル存在チェック               2  仕      _require_pdf_exists
-  K DeepL実課金統合テスト                    2  外      write_translated_pages,
+  J 入力PDFファイル存在チェック               2  仕  (1.0)    _require_pdf_exists
+  K DeepL実課金統合テスト                    2  外  (4)(5)   write_translated_pages,
                                                        report_untranslated_fragment_
                                                        candidates,
                                                        find_untranslated_fragment_
@@ -1324,12 +1331,12 @@ sample0.pdf・sample1.pdf（後者は追加条件付き）に限りDeepLを実�
   3つの自動保護関数（pdf_text_utils.wrap_bare_greek_letters・
   wrap_bare_letter_equals_expressions・math_protection.protect_
   confirmed_single_letter_leaks）があり、KNOWN_LEAKED_MATH_FRAGMENTS
-  の本来の7件（x/y/z/K/γ/t=1/t=0）が全て自動保護されるようになった
-  結果、このリストは現在空集合である。
+  の本来の7件（x/y/z/K/γ/t=1/t=0）は全て自動保護されているため、
+  このリストは空集合である。
   protect_confirmed_single_letter_leaksは、既存の$...$保護済みスパン
   の内部を誤って二重に囲むと数式が破損するため、protect/restoreで
   既存スパンを一時退避してから置換する実装になっている（詳細は
-  explain.txtの1.2.2.2.7参照）。ギリシャ文字の保護はTeXコマンド形式
+  explain.txtの1.2.2.7参照）。ギリシャ文字の保護はTeXコマンド形式
   （例:"γ"→"$\gamma$"）に変換して行う（KaTeX本体が生の文字を\gamma
   のエイリアスとして扱うことはvendor/katex/katex.min.jsの内部定義から
   確認済みで、動作上は生の文字でもコマンド形式でも等価だが、他の数式
