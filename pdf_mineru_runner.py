@@ -14,6 +14,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from mineru_cache import load_cached_items, save_cache
+
 
 class MinerURunError(RuntimeError):
     """MinerUの実行に失敗した場合に送出する例外。
@@ -59,7 +61,18 @@ def run_mineru(
     Raises:
         MinerURunError: MinerUのプロセスが異常終了した場合、または期待した
             出力ファイルが生成されなかった場合。
+
+    Note:
+        内部でローカルキャッシュ（:mod:`mineru_cache`）を利用する場合がある。
+        同一PDF・同一ページ範囲・同一MinerUバージョンでの再実行はキャッシュ
+        から返るため、``work_dir``にMinerUの生出力が書き込まれないことが
+        ある。呼び出し側の型・戻り値仕様はキャッシュの有無によらず不変。
     """
+    cached = load_cached_items(pdf_path, start_page, end_page)
+    if cached is not None:
+        items, images_base = cached
+        return MinerUOutput(items=items, images_base=images_base)
+
     command = [
         sys.executable, "-m", "mineru.cli.client",
         "--path", str(pdf_path),
@@ -84,4 +97,6 @@ def run_mineru(
         raise MinerURunError(f"MinerUの出力が見つかりません: {content_list_path}")
 
     items = json.loads(content_list_path.read_text(encoding="utf-8"))
-    return MinerUOutput(items=items, images_base=content_list_path.parent)
+    images_base = content_list_path.parent
+    save_cache(pdf_path, start_page, end_page, items, images_base)
+    return MinerUOutput(items=items, images_base=images_base)

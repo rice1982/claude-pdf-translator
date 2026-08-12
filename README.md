@@ -365,6 +365,27 @@ venv\Scripts\python setup_inputs.py
 ついては、それぞれの著者のライセンスおよび適用される著作権法を遵守し、
 ユーザー自身の責任において行ってください。
 
+### MinerU実行結果のローカルキャッシュについて
+
+MinerUによるPDF解析結果（`content_list.json`相当のデータおよび抽出画像）は、
+`cache/<PDFファイル名>[_p{開始ページ}_{終了ページ}]/mineru_cache/`に
+自動的にキャッシュされます。このキャッシュは`pytest`実行と、
+`pdf_processor.py`/`translate_paper.py`による手動実行のどちらからも
+共有されます（対象PDFファイルの内容・ページ範囲・MinerUのバージョンが
+一致する限り再利用されます）。
+
+- 初回実行時は通常通りMinerUが起動するため時間がかかりますが、2回目以降、
+  同一PDF・同一ページ範囲・同一MinerUバージョンでの実行はキャッシュから
+  即座に結果が返るため大幅に高速化されます。
+- MinerUをアップグレードした場合や、`input/`配下のPDFファイルを別内容の
+  ものに差し替えた場合は、自動的にキャッシュが無効化され再実行されます。
+  手動でのキャッシュ削除は不要です。
+- 明示的にキャッシュを無視して常に実行させたい場合は、環境変数
+  `MINERU_CACHE_DISABLE=1`を設定してください。
+- `cache/`は`input/`・`output/`と同様、著作権上の理由から`.gitignore`で
+  除外されておりGit管理対象外です。ディスク容量が気になる場合は
+  `cache/`ごと削除しても問題ありません（次回実行時に自動再生成されます）。
+
 ### テスト（pytest）の実行について
 
 `test_translator.py`のテストスイートの一部は、`input/sample0.pdf`〜
@@ -411,6 +432,8 @@ PDFを使う場合、一部のテスト（実データの文言をハードコ�
 ```
 pdf_processor.py         … PDF解析パイプラインの起点（MinerU実行〜Markdown出力）
 pdf_mineru_runner.py     … MinerU実行ラッパー
+mineru_cache.py           … MinerU実行結果のローカルキャッシュ（cache/、詳細は「MinerU実行結果のローカルキャッシュについて」参照）
+mineru_version.py         … インストール済みMinerUのバージョン取得（キャッシュキー生成用）
 pdf_structure_analyzer.py… 構造解析（本文/図表/数式/見出し等への分類・目次解析）
 pdf_text_utils.py        … 文分割・見出し判定・ページラベル変換等のユーティリティ
 pdf_document_builder.py  … ページ別Markdownの組み立て・画像保存

@@ -287,7 +287,11 @@ sample0.pdfに限りDeepLを実課金でモック化せず呼び出す例外がC
   共通の仕組み: モジュールスコープの fixture `processed` が
   input/sample0.pdf を1回だけ処理し、生成された page_01_en.md /
   page_02_en.md の中身を全テストで使い回す（MinerU推論が数分かかる
-  ため、テストごとに再実行しない）。
+  ため、テストごとに再実行しない）。MinerUの解析結果自体はcache/配下の
+  ローカルキャッシュにも保存されており、対象PDF・ページ範囲・MinerU
+  バージョンが変わらない限りpytestプロセスをまたいで再利用されるため、
+  2回目以降の実行はキャッシュヒットにより数秒で完了する（詳細は
+  mineru_cache.py参照）。
 
   何を調べているか（テストごと）:
     - test_extract_and_number_sentences: ページ数(2)とファイル名

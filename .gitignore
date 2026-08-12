@@ -6,6 +6,10 @@ venv/
 # 出力成果物を除外
 output/
 
+# MinerU実行結果のローカルキャッシュを除外（content_list.jsonは論文本文を
+# ほぼそのまま含むため、input/・output/と同様に著作権上コミット対象外とする）
+cache/
+
 # テスト用サンプルPDFおよび著作権表示等（著作権の都合上リポジトリに
 # 含めない。setup_inputs.pyを実行するか、各自input/配下に用意してください）
 input/*

@@ -291,10 +291,16 @@
           - items: content_list.jsonの中身（ページ横断のフラットな要素リスト）
           - images_base: items中のimg_path（相対パス）を解決するための基準ディレクトリ
         処理内容: MinerUをsubprocessとして実行しcontent_list.jsonを
-          読み込む。失敗時はMinerURunError。
+          読み込む。失敗時はMinerURunError。冒頭でmineru_cache.load_cached_items
+          によるローカルキャッシュ（cache/<PDFのstem>[_p{start}_{end}]/
+          mineru_cache/、PDFのSHA-256ハッシュ・ページ範囲・MinerUバージョンが
+          一致する場合のみヒット）を確認し、ヒットすればsubprocessを起動せず
+          キャッシュから返す。新規実行時は末尾でmineru_cache.save_cacheにより
+          結果を保存する（詳細はmineru_cache.py/mineru_version.py参照）。
         テスト対象:
           - スイートB（PDF解析パイプライン基本検証）: process_pdf経由で間接的に実行され、MinerUによる画像抽出・数式認識等の解析結果がスイートBの各テストの前提として検証される（run_mineru自体の戻り値を直接検証するテストは無い）。
           - スイートF（見出しへの合成章ID付与）: test_unnumbered_headings_in_real_book_pdf内でprocess_pdf経由で間接的に実行される（sample3.pdfのページ範囲67〜72に対するMinerU解析）。
+          - test_mineru_cache.py（test_translator.pyとは別ファイル、subprocess.runをモック化し実MinerUは起動しない）: run_mineru自体のキャッシュ挙動（PDF内容・ページ範囲・MinerUバージョン差によるキャッシュキーの分離、キャッシュヒット時にsubprocessが呼ばれないこと、キャッシュ破損時のフォールバック等）を直接検証している。
 
       1.2.1.2 analyze_structure（pdf_structure_analyzer.py）
         入力:
