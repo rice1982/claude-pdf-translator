@@ -39,6 +39,7 @@ from pdf_text_utils import (
     slugify_section_name,
     split_sentences,
     wrap_bare_greek_letters,
+    wrap_bare_letter_equals_expressions,
 )
 
 logger = logging.getLogger(__name__)
@@ -113,7 +114,11 @@ def _handle_list_item(item: dict, builder: _PageBuilder) -> None:
     通すとかえって誤分割を起こしやすいため）。
     """
     raw_items = item.get("list_items") or []
-    sentences = [restore_merged_hyphens(wrap_bare_greek_letters(s.strip())) for s in raw_items if s.strip()]
+    sentences = [
+        restore_merged_hyphens(wrap_bare_greek_letters(wrap_bare_letter_equals_expressions(s.strip())))
+        for s in raw_items
+        if s.strip()
+    ]
     if sentences:
         builder.elements.append(TextBlockElement(sentences=sentences))
 
@@ -135,7 +140,11 @@ def _handle_image_or_table_item(item: dict, item_type: str, images_base, builder
     raw_captions = (
         item.get("image_caption") or item.get("table_caption") or item.get("chart_caption") or []
     )
-    captions = [restore_merged_hyphens(wrap_bare_greek_letters(c.strip())) for c in raw_captions if c.strip()]
+    captions = [
+        restore_merged_hyphens(wrap_bare_greek_letters(wrap_bare_letter_equals_expressions(c.strip())))
+        for c in raw_captions
+        if c.strip()
+    ]
 
     # MinerUはtable_caption/image_captionに、キャプション文と脚注（例: 表の
     # 下にある"*Our own implementation..."等の補足説明）を別要素として並べて
@@ -228,7 +237,9 @@ def _handle_text_item(item: dict, builder: _PageBuilder, unnumbered_heading_seq:
             見出しに章番号が付いていない場合の合成章番号（"u1", "u2", ...）
             の採番に使う。
     """
-    text = restore_merged_hyphens(wrap_bare_greek_letters(item.get("text", "").strip()))
+    text = restore_merged_hyphens(
+        wrap_bare_greek_letters(wrap_bare_letter_equals_expressions(item.get("text", "").strip()))
+    )
     if not text:
         return
 

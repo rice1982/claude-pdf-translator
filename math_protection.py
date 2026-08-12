@@ -137,8 +137,19 @@ def find_untranslated_fragment_candidates(ja_text: str) -> list[str]:
     ("1."）・節番号の参照("2.2"）・引用番号("[12]"）等、本文中に大量に
     存在する正当な半角の裸数字を誤検知してしまい実用にならないため、
     意図的な設計上のトレードオフとして残している。
+
+    既知の不具合修正（2026-08-12、sample1.pdfの実DeepL翻訳結果で確認）:
+    保護済みスパンの除外には、以前はprotect()（__MATH0__等のプレース
+    ホルダへの置換）を使っていたが、隣接する2つの保護済みスパンの間が
+    半角スペース1つだけの場合（例:"$a$ $b$"）、プレースホルダ文字列
+    同士が"__MATH0__ __MATH1__"のように結合されて1つの断片として抽出
+    されてしまい、単一プレースホルダの完全一致チェック（旧: 各トークンが
+    _TOKEN_RE.fullmatch）をすり抜けて誤検知していた（プレースホルダの
+    "_"がここでは「数式らしい記号」の条件にも合致してしまうため）。
+    プレースホルダへの置換ではなく_MATH_REで該当スパンを直接空文字列に
+    置換する方式に変更し、この結合自体が起こらないようにして修正した。
     """
-    protected, _ = protect(ja_text)
+    protected = _MATH_RE.sub("", ja_text)
     candidates = []
     # 半角スペースを挟んだ"t = 1"のような表記も1つの断片としてまとめて
     # 拾うため、非空白の半角文字（またはギリシャ文字）で始まり非空白の
@@ -147,8 +158,6 @@ def find_untranslated_fragment_candidates(ja_text: str) -> list[str]:
     pattern = rf"[{_HALFWIDTH_OR_GREEK_CHAR}](?:[\x20-\x7E{_GREEK}]*[{_HALFWIDTH_OR_GREEK_CHAR}])?"
     for m in re.finditer(pattern, protected):
         token = m.group(0)
-        if _TOKEN_RE.fullmatch(token):
-            continue  # __MATH0__ 等のプレースホルダ自身は候補ではない
         if not _LATIN_OR_GREEK_LETTER_RE.search(token):
             continue
         if len(token) <= 4 or re.search(r"[()=_^{}]", token):

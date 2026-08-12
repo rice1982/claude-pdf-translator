@@ -1,5 +1,8 @@
+import json
 import os
 import re
+import shutil
+from dataclasses import asdict
 from pathlib import Path
 
 import fitz  # PyMuPDF
@@ -32,8 +35,9 @@ from pdf_page_label_resolver import (
     resolve_physical_page_range,
 )
 from pdf_processor import process_pdf, split_sentences
+from pdf_renderer import build_blocks, render_all_pdfs
 from pdf_structure_analyzer import analyze_structure
-from pdf_text_utils import wrap_bare_greek_letters
+from pdf_text_utils import wrap_bare_greek_letters, wrap_bare_letter_equals_expressions
 import translate_paper
 from translate_paper import resolve_page_range, translate_and_export
 from translation_models import DocUnit
@@ -234,15 +238,19 @@ def test_math_protection_round_trips_all_real_inline_math(processed):
     "scale γ"のように$...$で保護されていなかったギリシャ文字が構造解析
     段階で自動的に$γ$として保護されるようになった。これによりpage_02の
     数式スパン数が24個から25個に増えている（詳細は下記assertのコメント
-    参照）。"""
+    参照）。2026-08-12、同様にwrap_bare_letter_equals_expressions経由で
+    "t = 1"/"t = 0"（P2-S7）も自動的に$...$保護されるようになり、
+    25個から27個に増えた。"""
     text = processed["texts"]["page_02_en.md"]
 
     protected, spans = protect(text)
-    # page_02_en.mdに実際に含まれる数式スパン数（インライン22+ディスプレイ3。
+    # page_02_en.mdに実際に含まれる数式スパン数（インライン24+ディスプレイ3。
     # 2026-08-10、wrap_bare_greek_lettersによる"$γ$"の自動保護が加わり
-    # 21から22に増えた）。MinerUの数式検出結果が変われば変化しうる値の
-    # ため、変化した場合は数式検出の挙動が変わっていないか確認すること。
-    assert len(spans) == 25
+    # 21から22に増え、2026-08-12、wrap_bare_letter_equals_expressionsに
+    # よる"$t = 1$"/"$t = 0$"の自動保護が加わり25から27に増えた）。
+    # MinerUの数式検出結果が変われば変化しうる値のため、変化した場合は
+    # 数式検出の挙動が変わっていないか確認すること。
+    assert len(spans) == 27
     # プレースホルダ置換後のテキストに数式デリミタ$が一切残っていないこと
     # （＝検出された数式スパンがDeepLへの翻訳リクエストから完全に
     # 除外されることの確認）
@@ -362,6 +370,30 @@ def test_parse_caption_label(text, expected):
 def test_wrap_bare_greek_letters(text, expected):
     """未保護のギリシャ文字が$...$で自動的に囲まれるかの単体テスト。"""
     assert wrap_bare_greek_letters(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # "1文字の変数 = 値"という数式的表現は、実在の英文として自然に
+        # 使われることが無いため自動的に$...$で保護してよい（2026-08-12
+        # 追加）。math_protection.find_unprotected_math_like_tokensと
+        # 同じ正規表現を使う。
+        ("integrate t = 1 to t = 0.", "integrate $t = 1$ to $t = 0$."),
+        # 変数名・値の間の空白の有無や全角風の間隔にも対応する。
+        ("where K=5 discrete steps", "where $K=5$ discrete steps"),
+        # 既に$...$で保護済みの断片は二重にラップしない。
+        ("already protected $t = 1$ here", "already protected $t = 1$ here"),
+        # パターンに合致する箇所が無ければ何も変化しない。
+        ("no bare equations here at all.", "no bare equations here at all."),
+        # 2文字以上の識別子（"ab = 1"）は対象外（単体アルファベットに
+        # 限定することで、通常の英単語との誤認を避ける設計）。
+        ("ab = 1 is not a match", "ab = 1 is not a match"),
+    ],
+)
+def test_wrap_bare_letter_equals_expressions(text, expected):
+    """未保護の"1文字の変数 = 値"形式が$...$で自動的に囲まれるかの単体テスト。"""
+    assert wrap_bare_letter_equals_expressions(text) == expected
 
 
 @pytest.mark.parametrize(
@@ -1069,13 +1101,13 @@ KNOWN_FALSE_POSITIVE_FRAGMENTS = {
     "LoRA",  # 固有名詞（手法名）。P2-FIG1-CAPTION-S3。
     "FLUX",  # 固有名詞（モデル名）。P2-S13。
     "(ODE)",  # 略語（Ordinary Differential Equation）。P2-S7。
+    "ODE",  # 同上の表記ゆれ。P2-S7。DeepLが全角括弧「（ODE）」で出力する
+    # ことがあり、find_untranslated_fragment_candidatesは半角部分のみを
+    # 抽出するため"(ODE)"とは別トークンになる（2026-08-12、再実行時に
+    # 新たに確認）。
     "(i)", "(ii)", "(iii)",  # 列挙記号。P2-S4。
 }
-KNOWN_LEAKED_MATH_FRAGMENTS = {
-    "t = 1", "t = 0",  # P2-S7。積分区間の端点（"="を含む複数文字の
-    # トークンのため、単体アルファベット限定のprotect_confirmed_
-    # single_letter_leaksでは自動保護されず、引き続き許可リストで容認）。
-}
+KNOWN_LEAKED_MATH_FRAGMENTS: set[str] = set()
 # 注1: "γ"（P2-FIG1-CAPTION-S3の"scale γ"）は当初ここに含めていたが、
 # 2026-08-10にpdf_text_utils.wrap_bare_greek_lettersを追加し、構造解析
 # 段階でギリシャ文字を自動的に$...$保護するようにしたため、find_
@@ -1092,33 +1124,99 @@ KNOWN_LEAKED_MATH_FRAGMENTS = {
 # 引き続き検出のみ・許可リストでの容認とする（詳細はpdf_text_utils.pyの
 # wrap_bare_greek_letters、math_protection.pyのprotect_confirmed_
 # single_letter_leaksのdocstring参照）。
+#
+# 注3: "t = 1"/"t = 0"（P2-S7の積分区間の端点）も当初KNOWN_LEAKED_MATH_
+# FRAGMENTSに含めていたが、2026-08-12にpdf_text_utils.wrap_bare_letter_
+# equals_expressionsを追加し、「1文字の変数 = 値」形式の数式的表現を
+# 構造解析段階で自動的に$...$保護するようにしたため、find_untranslated_
+# fragment_candidatesではもう検出されなくなった（許可リストから削除）。
+# "DiT"/"NMS"のような固有名詞と異なり、"a = b"という形は実在の英文として
+# 自然に使われることが無いため、複数文字のトークンでも誤認リスクが低いと
+# 判断し自動保護の対象にできた。
+
+# sample1.pdf（表を含む論文フルサイズ、9ページ）向けの許可リスト
+# （2026-08-12追加）。sample0.pdfの許可リストとは別の論文・別の語彙の
+# ため独立して管理する。中身は下記
+# test_page_ja_md_and_candidate_detection_against_real_deepl_sample1の
+# 初回実行結果を人間が目視確認して追加したもの。
+KNOWN_FALSE_POSITIVE_FRAGMENTS_SAMPLE1: set[str] = {
+    "NMS",  # 略語（Non-Maximum Suppression）。P1-S16。
+    "CFG",  # 略語（Classifier-Free Guidance）。P1-S32、P8-S13。
+    "DiT",  # 固有名詞（モデル名）。P2-FIG1-CAPTION-S3、P2-S21、P8-S33。
+    "LoRA",  # 固有名詞（手法名）。P2-FIG1-CAPTION-S3、P2-S21、P2-S22、P8-S34、P8-S37。
+    "FLUX",  # 固有名詞（モデル名）。P2-S13。
+    "(ODE)",  # 略語（Ordinary Differential Equation）。
+    "ODE",  # 同上の表記ゆれ（全角括弧「（ODE）」）。P2-S7。sample0と同じ理由。
+    "(i)", "(ii)", "(iii)",  # 列挙記号。P2-S4。
+    "GED",  # 固有名詞（比較対象手法名。"GED adapts an image-generation
+    # foundation model..."）。P3-S31/32/33、P4-TABLE1-CAPTION-S2、P4-S5。
+    "ODS", "OIS",  # 評価指標の略語（Optimal Dataset/Image Scale、原文中で
+    # 定義済み："ODS (a single global threshold...) and OIS (the best
+    # threshold per image)"）。P3-S42。
+    "IoU",  # 評価指標の略語（Intersection over Union）。P3-S47、P4-S16。
+    "A.", "A.1.", "A.1", "A.2.", "A.2",  # 付録の章番号・参照
+    # （"Appendix A.1"等）およびその見出し文字列自体。P2-S23、P3-S27、
+    # P3-S39、P8-HEADING-A.*。
+    "B.", "B.1.", "B.1", "B.2.", "B.2",  # 同上（Appendix B）。P3-S15、
+    # P8-HEADING-B.*、P9-HEADING-B.2.decoder。
+    "C.", "C.1.", "C.1", "C.2.", "C.2",  # 同上（Appendix C）。P4-S7、
+    # P4-S10、P9-HEADING-C.*。
+}
+KNOWN_LEAKED_MATH_FRAGMENTS_SAMPLE1: set[str] = set()
 
 
-def test_page_ja_md_and_candidate_detection_against_real_deepl(processed, tmp_path):
-    """CLAUDE.mdの例外規定（2026-08-09、sample0.pdf限定でDeepL実課金
-    呼び出しを許可）に従い、他のテストと異なりDeepLをモック化せず実際に
-    呼び出す。write_translated_pagesによるpage_XX_ja.md生成に加え、
-    2026-08-10より、page_01/page_02全体を対象にした未保護数式のフル
-    チェックも行う。翻訳直後にprotect_confirmed_single_letter_leaksで
-    単体アルファベットの数式変数（"x"/"y"/"z"/"K"）を自動保護する処理も
-    本番と同じ位置で実行するため、これらは以降のフルチェックでは候補
-    として検出されない（詳細は下記KNOWN_LEAKED_MATH_FRAGMENTSの注2）。
+def _run_real_deepl_full_check(
+    processed: dict,
+    known_false_positives: set[str],
+    known_leaked: set[str],
+    run_id: str,
+) -> None:
+    """CLAUDE.mdの例外規定に従い、DeepLをモック化せず実際に呼び出して
+    write_translated_pagesによるpage_XX_ja.md生成と、page全体を対象にした
+    未保護数式のフルチェックを行う共通ロジック。
+
+    翻訳直後にprotect_confirmed_single_letter_leaksで単体アルファベットの
+    数式変数（"x"/"y"/"z"/"K"）を自動保護する処理も本番と同じ位置で実行
+    するため、これらは以降のフルチェックでは候補として検出されない。
+    `processed` fixture経由のprocess_pdfが構造解析段階で実行する
+    wrap_bare_greek_letters / wrap_bare_letter_equals_expressions
+    （"t = 1"等）も同様に、これらのフルチェックの時点で既に保護済みの
+    ため候補として検出されない。
 
     test_inline_math_is_wrapped_in_dollar_signs（スイートB）が"$p ( y
-    \\mid x )$"等2箇所の固定例だけをspot checkしているのに対し、本テストは
+    \\mid x )$"等2箇所の固定例だけをspot checkしているのに対し、本チェックは
     実際のDeepL翻訳結果からfind_untranslated_fragment_candidatesで
-    全候補を洗い出し、下記KNOWN_FALSE_POSITIVE_FRAGMENTS /
-    KNOWN_LEAKED_MATH_FRAGMENTS という人間確認済みの許可リストに無い
+    全候補を洗い出し、呼び出し側が渡す許可リスト（人間確認済み）に無い
     未知の候補が出現していないかを確認する、page全体を対象にした回帰
-    テストである。
+    チェックである。
 
     ただしDeepLの翻訳結果は完全に決定的ではなく、言い回しの変化により
     許可リストに無い新しい候補（真の数式漏れとは限らず、誤検知の場合も
-    ある）が出現しテストが失敗することがある。その場合は本テストの直前
-    に定義された2つの許可リストのdocstringに従い、目視確認の上でどちらか
-    に追加すること（“取りあえず許可リストに足してテストを通す”という
-    運用は本テストの目的を損なうため避けること）。PDF生成（Playwright）
-    は本テストの目的に不要なため実行しない。
+    ある）が出現し失敗することがある。その場合は呼び出し元の許可リストの
+    docstringに従い、目視確認の上でどちらかに追加すること（“取りあえず
+    許可リストに足してテストを通す”という運用は本チェックの目的を損なう
+    ため避けること）。対訳版・英語版・日本語版PDFも本番と同じ位置で生成し
+    キャッシュへ残す（2026-08-12、当初は「本チェックの目的に不要」として
+    省略していたが、実測でDeepL翻訳自体より短時間で終わることを確認した
+    ため、キャッシュを本番と同一の成果物にする方針に変更した）。
+
+    書き出し先は`cache/<run_id>/real_deepl_output/`という永続ディレクトリ
+    （MinerU実行結果キャッシュ（cache/<run_id>/mineru_cache/）と同じ
+    `cache/`配下の並列構成、2026-08-12追加）で、pytestの一時ディレクトリ
+    とは異なりテスト終了後も残る。これはDeepL呼び出しを省略するための
+    キャッシュではなく（本チェックは呼ばれるたびに必ず実際にDeepLを
+    呼ぶ）、直近の実行結果を人間が後から`page_XX_ja.md`で目視確認したり、
+    許可リスト検討のために再度参照したりする際に、pytestの一時
+    ディレクトリの自動削除を待たずに済むようにするための保存先である。
+    実行のたびに前回分を削除してから書き込むため、常に最新の実行結果
+    のみが残る。
+
+    Args:
+        processed: `processed`/`processed_sample1`等のfixtureが返す辞書。
+        known_false_positives: 誤検知として人間確認済みの許可リスト。
+        known_leaked: 本物の数式漏れとして人間確認済みの許可リスト。
+        run_id: 書き出し先`cache/<run_id>/real_deepl_output/`を決める
+            識別子（対象PDFごとに変える。例:"sample0","sample1"）。
     """
     load_dotenv()
     if os.environ.get("DEEPL_API_KEY") is None:
@@ -1134,28 +1232,70 @@ def test_page_ja_md_and_candidate_detection_against_real_deepl(processed, tmp_pa
 
     translate_with_deepl(units, os.environ["DEEPL_API_KEY"], document_context, log=lambda _msg: None)
 
+    ja_output_dir = Path(__file__).resolve().parent / "cache" / run_id / "real_deepl_output"
+    if ja_output_dir.exists():
+        shutil.rmtree(ja_output_dir)
+    ja_output_dir.mkdir(parents=True)
+    # build_blocksが画像をembedする際、output_dir配下のimages/を参照する
+    # ため、processed["output_dir"]（MinerU由来の画像がある元の場所）から
+    # コピーしておく（write_translated_pagesは文字列のみでファイルは
+    # コピーしないため、本番のtranslate_and_exportのように同一ディレクトリ
+    # を使い回す形では動かない）。
+    images_src = output_dir / "images"
+    if images_src.exists():
+        shutil.copytree(images_src, ja_output_dir / "images")
+
+    # 翻訳直後・後処理（protect_confirmed_single_letter_leaksによる
+    # $...$保護）より前の生データを保存する（2026-08-12追加）。DeepLへの
+    # 再翻訳なしに後処理ロジックだけをオフラインで検証できるようにする
+    # ための、DeepL呼び出しを伴わない専用テスト用のフィクスチャである
+    # （test_protect_confirmed_single_letter_leaks_matches_cached_
+    # real_deepl_output参照）。
+    (ja_output_dir / "units_raw.json").write_text(
+        json.dumps([asdict(u) for u in units], ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
     # 本番のtranslate_and_exportと同じ位置（翻訳直後・write_translated_
     # pagesの前）で、単体アルファベットの数式変数を自動保護する
     # （2026-08-10追加。再翻訳はしない後処理のため、ここで実行しても
     # 追加のDeepL課金は発生しない）。
     protect_confirmed_single_letter_leaks(units, log=lambda _msg: None)
 
-    ja_output_dir = tmp_path / "real_deepl_ja_output"
-    ja_output_dir.mkdir()
     written = write_translated_pages(units, ja_output_dir)
 
-    assert [p.name for p in written] == [
-        "page_01_en.md",
-        "page_01_ja.md",
-        "page_02_en.md",
-        "page_02_ja.md",
-    ]
+    # 本番のtranslate_and_exportと同じ位置で対訳版・英語版・日本語版の
+    # 3種類のPDFも生成する（2026-08-12追加。実測ではDeepL翻訳自体より
+    # 短時間で終わり、キャッシュを完全に本番と同じ成果物にすることで、
+    # KaTeXの実際の描画結果までキャッシュから直接目視確認できるように
+    # するため）。
+    blocks = build_blocks(units, ja_output_dir)
+    render_all_pdfs(blocks, ja_output_dir, log=lambda _msg: None)
+
+    # 生成されるファイル名は{stem}_en.md/{stem}_ja.mdの組がページ順に
+    # 並ぶ構造であり、ページ数はPDFごとに異なるため、processedが実際に
+    # 生成したページ別Markdown（英語版）のファイル名から動的に期待値を
+    # 組み立てる（sample0は2ページ、sample1は9ページ等、ハードコード
+    # しない）。
+    expected_names: list[str] = []
+    for md_path in processed["md_paths"]:
+        expected_names.append(md_path.name)
+        expected_names.append(md_path.name.replace("_en.md", "_ja.md"))
+    assert [p.name for p in written] == expected_names
+
+    # 参考文献セクションのみで構成されるページ等、exclude_references_
+    # sectionにより全unitが翻訳対象外になるページでは、_ja.mdに日本語が
+    # 含まれなくて正常（sample0の2ページ抜粋には参考文献のみのページが
+    # 無かったため、sample1で初めて顕在化した：2026-08-12）。
+    translatable_pages = {unit.page for unit in units if unit.translatable}
+
     for path in written:
         text = path.read_text(encoding="utf-8")
         assert text.strip(), f"{path} が空になっている"
         if path.name.endswith("_ja.md"):
-            has_japanese = any("぀" <= ch <= "ヿ" or "一" <= ch <= "鿿" for ch in text)
-            assert has_japanese, f"{path} に日本語文字が見つからない（翻訳が反映されていない可能性がある）"
+            page_num = int(path.stem.split("_")[1])
+            if page_num in translatable_pages:
+                has_japanese = any("぀" <= ch <= "ヿ" or "一" <= ch <= "鿿" for ch in text)
+                assert has_japanese, f"{path} に日本語文字が見つからない（翻訳が反映されていない可能性がある）"
         else:
             assert "__MATH" not in text, f"{path} に未復元のプレースホルダが残っている"
 
@@ -1166,7 +1306,7 @@ def test_page_ja_md_and_candidate_detection_against_real_deepl(processed, tmp_pa
 
     # page全体（全translatable unit）を対象に、未知の候補が無いかを
     # 確認する（2026-08-10追加。フルチェックの本体）。
-    known = KNOWN_FALSE_POSITIVE_FRAGMENTS | KNOWN_LEAKED_MATH_FRAGMENTS
+    known = known_false_positives | known_leaked
     unexpected: dict[str, list[str]] = {}
     for unit in units:
         if not unit.translatable:
@@ -1179,6 +1319,36 @@ def test_page_ja_md_and_candidate_detection_against_real_deepl(processed, tmp_pa
         "原文PDFで目視確認の上、誤検知ならKNOWN_FALSE_POSITIVE_FRAGMENTSへ、"
         "本物の数式漏れならKNOWN_LEAKED_MATH_FRAGMENTSへ追加してください: "
         f"{unexpected}"
+    )
+
+
+def test_page_ja_md_and_candidate_detection_against_real_deepl(processed):
+    """CLAUDE.mdの例外規定（2026-08-09、sample0.pdf限定でDeepL実課金
+    呼び出しを許可）に従い、sample0.pdf（2ページ抜粋）に対して実DeepL
+    フルチェックを行う。軽量なため、数式保護・翻訳関連のコードを触った
+    際の日常的な確認用として比較的気軽に実行してよい（詳細な処理内容は
+    _run_real_deepl_full_check参照）。
+    """
+    _run_real_deepl_full_check(processed, KNOWN_FALSE_POSITIVE_FRAGMENTS, KNOWN_LEAKED_MATH_FRAGMENTS, "sample0")
+
+
+def test_page_ja_md_and_candidate_detection_against_real_deepl_sample1(processed_sample1):
+    """sample1.pdf（表を含む論文フルサイズ、9ページ）に対する実DeepL
+    フルチェック（2026-08-12追加）。sample0.pdfはsample1.pdfの最初の
+    2ページを抽出したものであり、本チェックはsample0の内容を完全に
+    包含するスーパーセットである。
+
+    sample3.pdf運用ルール（CLAUDE.mdテスト運用規定2）と同様、コード・
+    許可リストとしては維持するが、9ページ分のDeepL実翻訳が毎回発生し
+    sample0版より高コストなため、日常の開発ループでは実行しない。広い
+    カバレッジでの確認が必要な限定的な場面でのみ、`-k`で明示的に指定
+    して実行すること（詳細な処理内容は_run_real_deepl_full_check参照）。
+    """
+    _run_real_deepl_full_check(
+        processed_sample1,
+        KNOWN_FALSE_POSITIVE_FRAGMENTS_SAMPLE1,
+        KNOWN_LEAKED_MATH_FRAGMENTS_SAMPLE1,
+        "sample1",
     )
 
 

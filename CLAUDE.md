@@ -60,11 +60,12 @@ PDFから本文、画像、メタデータを分離・抽出・翻訳（DeepL）
 3. **テスト実行指示・デフォルト翻訳エンジン**:
    - 通常の開発ループでは `pytest` または `sample0.pdf` を用いた高速な動作確認を中心に行い、章・範囲単位の確認が必要な場合のみ `sample3.pdf` の指定範囲を実行すること。
    - **`pytest` 実行時のテスト翻訳では、DeepLの有料APIキーを消費しないよう、DeepL呼び出し自体をモック化して自動化すること。**
-   - **例外**: `sample0.pdf` を対象に、実際のDeepL翻訳結果でしか検証できない項目（例: `page_XX_ja.md`の生成・未検出の数式らしき候補の検出が、実際のDeepL翻訳結果に対しても正しく機能するかの確認）に限り、DeepLを実課金でモック化せずに呼び出すテストを許可する。**この例外は`sample0.pdf`を用いるテストに限定し**、それ以外のPDF（`sample1`〜`sample3.pdf`）や、既存のDeepLモック前提のテスト（スイートG等）には適用しない。
+   - **例外**: `sample0.pdf`を対象に、実際のDeepL翻訳結果でしか検証できない項目（例: `page_XX_ja.md`の生成・未検出の数式らしき候補の検出が、実際のDeepL翻訳結果に対しても正しく機能するかの確認）に限り、DeepLを実課金でモック化せずに呼び出すテストを許可する。**この例外は`sample0.pdf`・`sample1.pdf`（下記の追加条件付き）を用いるテストに限定し**、`sample2.pdf`・`sample3.pdf`や、既存のDeepLモック前提のテスト（スイートG等）には適用しない（`sample3.pdf`は239ページの大型書籍であり、項目2の全体一括処理禁止規定と、実DeepLフルチェックが既存の正しい数式保護の描画結果まで変えてしまうリスクを踏まえ、実DeepLフルチェックの対象には含めないこととした）。
+     - `sample1.pdf`向け（`test_page_ja_md_and_candidate_detection_against_real_deepl_sample1`）: sample0.pdfはsample1.pdfの最初の2ページを抽出したものであり、本テストはsample0の内容を完全に包含するスーパーセットである。9ページ分の実DeepL翻訳が毎回発生しsample0版より高コストなため、コード・許可リストは維持するが日常の開発ループでは実行しない。広いカバレッジでの確認が必要な限定的な場面でのみ`-k`で明示的に指定して実行すること。
 4. **未保護インライン数式のフルチェック（許可リストの運用）**:
    - `test_page_ja_md_and_candidate_detection_against_real_deepl`（test_translator.py）は、`sample0.pdf`の実際のDeepL翻訳結果全体から`math_protection.find_untranslated_fragment_candidates`で未保護の数式らしき候補を洗い出し、`KNOWN_FALSE_POSITIVE_FRAGMENTS`（固有名詞・略語・列挙記号）／`KNOWN_LEAKED_MATH_FRAGMENTS`（本物の未保護数式）という2つの許可リストに無い未知の候補が出たら失敗する回帰テストである。
    - DeepLの翻訳結果は完全に決定的ではないため、言い回しの変化によりこのテストが失敗することがある。失敗時は人間が実際の`page_XX_ja.md`・原文PDFを目視確認し、新しい候補を上記いずれかの許可リストへ追加すること。**内容を確認せず機械的にリストへ追加してテストを通すことは禁止する**（本テストの目的（未保護の数式漏れの検知）を損なうため）。
-   - 本物の数式漏れ（`KNOWN_LEAKED_MATH_FRAGMENTS`）は、可能な限り許可リストへの追加ではなく`pdf_text_utils.py`/`math_protection.py`側での自動`$...$`保護の実装を優先すること。ギリシャ文字（`wrap_bare_greek_letters`）と、翻訳後も半角のまま残る単体アルファベット変数（`protect_confirmed_single_letter_leaks`）は既にこの方針で自動保護済みであり、許可リストへの追加は「実在の固有名詞・略語と自動判別できない場合（例:"DiT","NMS"）」の最終手段として運用する。
+   - 本物の数式漏れ（`KNOWN_LEAKED_MATH_FRAGMENTS`）は、可能な限り許可リストへの追加ではなく`pdf_text_utils.py`/`math_protection.py`側での自動`$...$`保護の実装を優先すること。ギリシャ文字（`wrap_bare_greek_letters`）、「1文字の変数 = 値」形式の数式的表現（例:"t = 1"、`wrap_bare_letter_equals_expressions`）、翻訳後も半角のまま残る単体アルファベット変数（`protect_confirmed_single_letter_leaks`）は既にこの方針で自動保護済みであり、許可リストへの追加は「実在の固有名詞・略語と自動判別できない場合（例:"DiT","NMS"）」「英字を含まない裸の数字1文字等、パターンとして機械的に切り出せない場合」の最終手段として運用する。
 5. **実データ依存テストと汎用ロジックテストの分離**:
    - `resolve_chapter_page_range`（章番号→ページ範囲）や`resolve_physical_page`（印刷ページラベル→物理ページ番号）のように、特定の論文・書籍の内容には依存しないはずの汎用アルゴリズムを検証する場合、ダウンロードした実サンプルPDF（`sample1`〜`sample3.pdf`）の実際の目次・ページラベル構成に期待値を直接ハードコードしてはならない。実PDFの内容変化（著者の改訂、当初の期待値の転記ミス等）でコードは正しいままテストだけが壊れるリスクがあるため（実際に本プロジェクトで発生した）。
    - 代わりに、`fitz`（PyMuPDF）でテスト実行時に組み立てる目次・印刷ページラベルのみを持つ使い捨ての合成PDF（`test_translator.py`の`_build_synthetic_toc_pdf`/`_build_synthetic_labeled_pdf`参照）を使い、アルゴリズムの性質だけを決定的に検証すること。

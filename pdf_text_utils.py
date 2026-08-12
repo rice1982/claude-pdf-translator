@@ -125,6 +125,46 @@ _GREEK_TO_TEX_COMMAND = {
 }
 
 
+# --- 単体アルファベット=値 の数式保護（2026-08-12追加） ----------------------
+#
+# MinerUの数式検出は完全ではなく、"t = 1"のように地の文に単独で出現する
+# 「1文字の変数 = 値」という数式的表現が$...$で囲まれないことがある
+# （math_protection.pyのfind_unprotected_math_like_tokensと同じパターンを
+# 検出に使うが、こちらは事後チェックではなく翻訳前に$...$へ包んで保護する）。
+# "a = b"のような表現が実在の英文として自然に使われることは無いため、
+# 自動的に数式とみなして保護してよいと判断できる。
+
+_BARE_LETTER_EQUALS_RE = re.compile(r"\b[a-zA-Z]\s*=\s*[a-zA-Z0-9]+\b")
+
+
+def wrap_bare_letter_equals_expressions(text: str) -> str:
+    """$...$で保護されていない「1文字の変数 = 値」形式の数式的表現
+    （例:"t = 1"）を$...$に包み、翻訳エンジンから保護する。
+
+    既に$...$/$$...$$で保護済みの数式スパン内は対象外とし、二重にラップ
+    しない（wrap_bare_greek_lettersと同じ、_INLINE_MATH_REで数式スパンを
+    避けながら処理する方式）。
+
+    Args:
+        text: 変換対象の文字列（MinerUのtext_levelなし本文やキャプション等）。
+
+    Returns:
+        該当パターンを$...$に包んだ後の文字列。数式スパン部分は元のまま。
+    """
+
+    def run_repl(m: re.Match) -> str:
+        return f"${m.group(0)}$"
+
+    parts: list[str] = []
+    last = 0
+    for math_match in _INLINE_MATH_RE.finditer(text):
+        parts.append(_BARE_LETTER_EQUALS_RE.sub(run_repl, text[last:math_match.start()]))
+        parts.append(math_match.group(0))
+        last = math_match.end()
+    parts.append(_BARE_LETTER_EQUALS_RE.sub(run_repl, text[last:]))
+    return "".join(parts)
+
+
 def wrap_bare_greek_letters(text: str) -> str:
     """$...$で保護されていないギリシャ文字をTeXコマンド形式（例:"γ"→
     "\\gamma"）に変換した上で$...$に包み、翻訳エンジンから保護する
