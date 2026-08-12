@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import deepl
 
@@ -22,13 +23,62 @@ class TranslationBackendError(Exception):
     """DeepLでの翻訳を継続できないことを示す（フォールバックのトリガー）。"""
 
 
-def translate_with_deepl(
+@dataclass
+class RawDeeplResult:
+    """1unit分のDeepL応答（restore適用前）。"""
+
+    raw_text: str
+    """DeepLの応答テキスト（数式プレースホルダ__MATHn__が残った状態）。"""
+    math_spans: list[str]
+    """restoreでプレースホルダを復元するための、元の数式スパンのリスト。"""
+
+
+@dataclass
+class DeeplRequest:
+    """1unit分の、DeepLへ実際に送信される内容。"""
+
+    protected_text: str
+    """DeepLの``text``引数に渡される本文（数式プレースホルダ退避済み）。"""
+    context_text: str | None
+    """DeepLの``context``引数に渡される文脈（ドキュメント要約＋直近履歴）。"""
+
+
+def build_deepl_requests(units: list[DocUnit], document_context: str) -> dict[str, DeeplRequest]:
+    """DeepLへ実際に送信される内容を、unit.tagをキーにした辞書で返す。
+
+    ``call_deepl``が内部で組み立てる内容と同じ決定的な計算（``protect``と
+    直近3文の履歴の連結）であり、DeepLへの通信は行わない。
+    """
+    history: list[str] = []
+    requests: dict[str, DeeplRequest] = {}
+
+    for unit in units:
+        if not unit.translatable:
+            continue
+
+        protected_text, _ = protect(unit.en_text)
+
+        context_parts = [document_context] if document_context else []
+        if history:
+            context_parts.append("\n".join(history[-_CONTEXT_HISTORY_SIZE:]))
+        context_text = "\n\n".join(context_parts) or None
+
+        requests[unit.tag] = DeeplRequest(protected_text=protected_text, context_text=context_text)
+        history.append(protected_text)
+
+    return requests
+
+
+def call_deepl(
     units: list[DocUnit],
     api_key: str | None,
     document_context: str,
     log: Callable[[str], None] = print,
-) -> None:
-    """翻訳対象のDocUnitを順に翻訳し、``unit.ja_text`` を書き換える。
+) -> dict[str, RawDeeplResult]:
+    """翻訳対象のDocUnitを順にDeepLへ送り、restore適用前の生の応答を返す。
+
+    ``unit.ja_text`` はこの時点では書き換えない。数式の復元は
+    :func:`apply_restore` が担う。
 
     Raises:
         TranslationBackendError: キー未設定、上限到達、通信エラーなど、
@@ -39,6 +89,7 @@ def translate_with_deepl(
 
     translator = deepl.Translator(api_key)
     history: list[str] = []
+    raw_results: dict[str, RawDeeplResult] = {}
 
     for unit in units:
         if not unit.translatable:
@@ -64,5 +115,19 @@ def translate_with_deepl(
         except deepl.DeepLException as exc:
             raise TranslationBackendError(f"DeepL翻訳でエラーが発生しました: {exc}") from exc
 
-        unit.ja_text = restore(result.text, math_spans)
+        raw_results[unit.tag] = RawDeeplResult(raw_text=result.text, math_spans=math_spans)
         history.append(protected_text)
+
+    return raw_results
+
+
+def apply_restore(units: list[DocUnit], raw_results: dict[str, RawDeeplResult]) -> None:
+    """:func:`call_deepl` の戻り値を受け取り、数式を復元して``unit.ja_text``へ書き込む。
+
+    DeepLへの再通信を伴わない決定的な処理。
+    """
+    for unit in units:
+        if not unit.translatable:
+            continue
+        raw = raw_results[unit.tag]
+        unit.ja_text = restore(raw.raw_text, raw.math_spans)

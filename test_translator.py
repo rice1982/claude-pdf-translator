@@ -10,7 +10,7 @@ import pytest
 from dotenv import load_dotenv
 
 import pdf_processor
-from deepl_translator import translate_with_deepl
+from deepl_translator import RawDeeplResult, apply_restore, build_deepl_requests, call_deepl
 from math_protection import (
     check_unprotected_math_survival,
     find_untranslated_fragment_candidates,
@@ -35,7 +35,6 @@ from pdf_page_label_resolver import (
     resolve_physical_page_range,
 )
 from pdf_processor import process_pdf, split_sentences
-from pdf_renderer import build_blocks, render_all_pdfs
 from pdf_structure_analyzer import analyze_structure
 from pdf_text_utils import wrap_bare_greek_letters, wrap_bare_letter_equals_expressions
 import translate_paper
@@ -517,7 +516,7 @@ def test_report_untranslated_fragment_candidates_skips_non_translatable_units():
 def test_protect_confirmed_single_letter_leaks_wraps_matching_occurrences():
     """未保護の単体アルファベット（例:"z"）が、en_text・ja_text双方の
     同じ箇所で$...$に置き換わるか（2026-08-10追加）。DeepLへの再翻訳は
-    行わないため、テスト内でtranslate_with_deeplは一切呼ばない。"""
+    行わないため、テスト内でcall_deepl/apply_restoreは一切呼ばない。"""
     units = [
         DocUnit(
             tag="P1-S1-body-S1",
@@ -900,7 +899,7 @@ def test_unnumbered_headings_in_real_book_pdf(tmp_path):
 def test_translate_and_export_with_mocked_deepl(processed, monkeypatch):
     """CLAUDE.mdの規定により、pytestでの翻訳テストはDeepLの有料APIキーを
     消費しないよう、DeepL呼び出し自体をモックする
-    （``translate_paper.translate_with_deepl`` を差し替える）。
+    （``translate_paper.call_deepl`` を差し替える）。
 
     既にMinerU解析済みの``processed``フィクスチャのoutput_dir
     （sample0.pdfを2ページ分処理した一時ディレクトリ）に対し、Step2〜4
@@ -912,12 +911,14 @@ def test_translate_and_export_with_mocked_deepl(processed, monkeypatch):
     実行時間は翻訳・PDF生成の分のみで済む。
     """
 
-    def _fake_translate_with_deepl(units, api_key, document_context, log=print):
-        for unit in units:
-            if unit.translatable:
-                unit.ja_text = "これはテスト用の日本語訳です。"
+    def _fake_call_deepl(units, api_key, document_context, log=print):
+        return {
+            unit.tag: RawDeeplResult(raw_text="これはテスト用の日本語訳です。", math_spans=[])
+            for unit in units
+            if unit.translatable
+        }
 
-    monkeypatch.setattr(translate_paper, "translate_with_deepl", _fake_translate_with_deepl)
+    monkeypatch.setattr(translate_paper, "call_deepl", _fake_call_deepl)
 
     output_dir = processed["output_dir"]
     pdf_paths = translate_and_export(output_dir)
@@ -1014,12 +1015,12 @@ def test_translate_and_export_translates_all_translatable_units(tmp_path, monkey
         encoding="utf-8",
     )
 
-    def _fake_translate_with_deepl(units, api_key, document_context, log=print):
-        for unit in units:
-            if unit.translatable:
-                unit.ja_text = mock_ja
+    def _fake_call_deepl(units, api_key, document_context, log=print):
+        return {
+            unit.tag: RawDeeplResult(raw_text=mock_ja, math_spans=[]) for unit in units if unit.translatable
+        }
 
-    monkeypatch.setattr(translate_paper, "translate_with_deepl", _fake_translate_with_deepl)
+    monkeypatch.setattr(translate_paper, "call_deepl", _fake_call_deepl)
 
     pdf_paths = translate_and_export(output_dir)
     ja_pdf_path = next(p for p in pdf_paths if p.name == "paper_ja.pdf")
@@ -1055,12 +1056,12 @@ def test_translate_and_export_excludes_references_section(tmp_path, monkeypatch)
         encoding="utf-8",
     )
 
-    def _fake_translate_with_deepl(units, api_key, document_context, log=print):
-        for unit in units:
-            if unit.translatable:
-                unit.ja_text = mock_ja
+    def _fake_call_deepl(units, api_key, document_context, log=print):
+        return {
+            unit.tag: RawDeeplResult(raw_text=mock_ja, math_spans=[]) for unit in units if unit.translatable
+        }
 
-    monkeypatch.setattr(translate_paper, "translate_with_deepl", _fake_translate_with_deepl)
+    monkeypatch.setattr(translate_paper, "call_deepl", _fake_call_deepl)
 
     pdf_paths = translate_and_export(output_dir)
     ja_pdf_path = next(p for p in pdf_paths if p.name == "paper_ja.pdf")
@@ -1195,21 +1196,31 @@ def _run_real_deepl_full_check(
     ある）が出現し失敗することがある。その場合は呼び出し元の許可リストの
     docstringに従い、目視確認の上でどちらかに追加すること（“取りあえず
     許可リストに足してテストを通す”という運用は本チェックの目的を損なう
-    ため避けること）。対訳版・英語版・日本語版PDFも本番と同じ位置で生成し
-    キャッシュへ残す（2026-08-12、当初は「本チェックの目的に不要」として
-    省略していたが、実測でDeepL翻訳自体より短時間で終わることを確認した
-    ため、キャッシュを本番と同一の成果物にする方針に変更した）。
+    ため避けること）。
 
     書き出し先は`cache/<run_id>/real_deepl_output/`という永続ディレクトリ
     （MinerU実行結果キャッシュ（cache/<run_id>/mineru_cache/）と同じ
-    `cache/`配下の並列構成、2026-08-12追加）で、pytestの一時ディレクトリ
-    とは異なりテスト終了後も残る。これはDeepL呼び出しを省略するための
-    キャッシュではなく（本チェックは呼ばれるたびに必ず実際にDeepLを
-    呼ぶ）、直近の実行結果を人間が後から`page_XX_ja.md`で目視確認したり、
-    許可リスト検討のために再度参照したりする際に、pytestの一時
-    ディレクトリの自動削除を待たずに済むようにするための保存先である。
-    実行のたびに前回分を削除してから書き込むため、常に最新の実行結果
-    のみが残る。
+    `cache/`配下の並列構成）で、pytestの一時ディレクトリとは異なりテスト
+    終了後も残る。工程（explain.txtの「■工程」参照）ごとにサブフォルダを
+    分けており、それぞれDeepLを呼ばずに再現できないもの、または
+    CLAUDE.mdの許可リスト運用で人間が目視確認する対象のみを保存する。
+        - 03_structured/: document_context.txt・page_XX_en.md（工程3の出力）
+        - 04_deepl_input/deepl_input.json: unitごとにDeepLへ実際に送信
+          された本文・文脈（工程4への入力）
+        - 04_deepl_output/raw_deepl_results.json: DeepLの生応答（restore
+          適用前）とrestore用の数式スパン（工程4の出力）
+        - 05_postprocess/: units_raw.json（restore直後・
+          protect_confirmed_single_letter_leaks適用前のDocUnit
+          スナップショット）とpage_XX_ja.md（最終的な翻訳済みMarkdown。
+          工程5の出力）
+    PDF・画像は含めない。DeepLを呼ばず05_postprocess/のunits_raw.jsonから
+    決定的に再生成できるため、恒久的に保持する必要がないからである。
+    これはDeepL呼び出しを省略するためのキャッシュではなく（本チェックは
+    呼ばれるたびに必ず実際にDeepLを呼ぶ）、直近の実行結果を人間が後から
+    `page_XX_ja.md`で目視確認したり、許可リスト検討のために再度参照したり
+    する際に、pytestの一時ディレクトリの自動削除を待たずに済むようにする
+    ための保存先である。実行のたびに前回分を削除してから書き込むため、
+    常に最新の実行結果のみが残る。
 
     Args:
         processed: `processed`/`processed_sample1`等のfixtureが返す辞書。
@@ -1230,46 +1241,53 @@ def _run_real_deepl_full_check(
     exclude_references_section(units)
     document_context = build_document_context(units)
 
-    translate_with_deepl(units, os.environ["DEEPL_API_KEY"], document_context, log=lambda _msg: None)
+    cache_root = Path(__file__).resolve().parent / "cache" / run_id / "real_deepl_output"
+    if cache_root.exists():
+        shutil.rmtree(cache_root)
 
-    ja_output_dir = Path(__file__).resolve().parent / "cache" / run_id / "real_deepl_output"
-    if ja_output_dir.exists():
-        shutil.rmtree(ja_output_dir)
-    ja_output_dir.mkdir(parents=True)
-    # build_blocksが画像をembedする際、output_dir配下のimages/を参照する
-    # ため、processed["output_dir"]（MinerU由来の画像がある元の場所）から
-    # コピーしておく（write_translated_pagesは文字列のみでファイルは
-    # コピーしないため、本番のtranslate_and_exportのように同一ディレクトリ
-    # を使い回す形では動かない）。
-    images_src = output_dir / "images"
-    if images_src.exists():
-        shutil.copytree(images_src, ja_output_dir / "images")
+    structured_dir = cache_root / "03_structured"
+    structured_dir.mkdir(parents=True)
+    (structured_dir / "document_context.txt").write_text(document_context, encoding="utf-8")
+    for md_path in processed["md_paths"]:
+        (structured_dir / md_path.name).write_text(processed["texts"][md_path.name], encoding="utf-8")
 
+    deepl_input_dir = cache_root / "04_deepl_input"
+    deepl_input_dir.mkdir(parents=True)
+    requests = build_deepl_requests(units, document_context)
+    (deepl_input_dir / "deepl_input.json").write_text(
+        json.dumps({tag: asdict(req) for tag, req in requests.items()}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    raw_results = call_deepl(units, os.environ["DEEPL_API_KEY"], document_context, log=lambda _msg: None)
+
+    deepl_output_dir = cache_root / "04_deepl_output"
+    deepl_output_dir.mkdir(parents=True)
+    (deepl_output_dir / "raw_deepl_results.json").write_text(
+        json.dumps({tag: asdict(raw) for tag, raw in raw_results.items()}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    apply_restore(units, raw_results)
+
+    postprocess_dir = cache_root / "05_postprocess"
+    postprocess_dir.mkdir(parents=True)
     # 翻訳直後・後処理（protect_confirmed_single_letter_leaksによる
-    # $...$保護）より前の生データを保存する（2026-08-12追加）。DeepLへの
-    # 再翻訳なしに後処理ロジックだけをオフラインで検証できるようにする
-    # ための、DeepL呼び出しを伴わない専用テスト用のフィクスチャである
-    # （test_protect_confirmed_single_letter_leaks_matches_cached_
-    # real_deepl_output参照）。
-    (ja_output_dir / "units_raw.json").write_text(
+    # $...$保護）より前の生データを保存する。DeepLへの再翻訳なしに
+    # 後処理ロジックだけをオフラインで検証できるようにするための、
+    # DeepL呼び出しを伴わない専用テスト用のフィクスチャである
+    # （test_apply_restore_matches_cached_real_deepl_output参照）。
+    (postprocess_dir / "units_raw.json").write_text(
         json.dumps([asdict(u) for u in units], ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
     # 本番のtranslate_and_exportと同じ位置（翻訳直後・write_translated_
     # pagesの前）で、単体アルファベットの数式変数を自動保護する
-    # （2026-08-10追加。再翻訳はしない後処理のため、ここで実行しても
-    # 追加のDeepL課金は発生しない）。
+    # （再翻訳はしない後処理のため、ここで実行しても追加のDeepL課金は
+    # 発生しない）。
     protect_confirmed_single_letter_leaks(units, log=lambda _msg: None)
 
-    written = write_translated_pages(units, ja_output_dir)
-
-    # 本番のtranslate_and_exportと同じ位置で対訳版・英語版・日本語版の
-    # 3種類のPDFも生成する（2026-08-12追加。実測ではDeepL翻訳自体より
-    # 短時間で終わり、キャッシュを完全に本番と同じ成果物にすることで、
-    # KaTeXの実際の描画結果までキャッシュから直接目視確認できるように
-    # するため）。
-    blocks = build_blocks(units, ja_output_dir)
-    render_all_pdfs(blocks, ja_output_dir, log=lambda _msg: None)
+    written = write_translated_pages(units, postprocess_dir)
 
     # 生成されるファイル名は{stem}_en.md/{stem}_ja.mdの組がページ順に
     # 並ぶ構造であり、ページ数はPDFごとに異なるため、processedが実際に
@@ -1350,6 +1368,50 @@ def test_page_ja_md_and_candidate_detection_against_real_deepl_sample1(processed
         KNOWN_LEAKED_MATH_FRAGMENTS_SAMPLE1,
         "sample1",
     )
+
+
+def test_apply_restore_matches_cached_real_deepl_output():
+    """apply_restore（工程5、DeepLへの再通信を伴わない決定的な数式復元）を、
+    cache/sample0/real_deepl_output/04_deepl_output/raw_deepl_results.json
+    （DeepLの生応答、restore適用前）と
+    cache/sample0/real_deepl_output/05_postprocess/units_raw.json
+    （restore直後に凍結されたDocUnitスナップショット）を突き合わせて
+    オフラインで検証する（DeepLを一切呼ばない）。
+
+    raw_deepl_results.jsonにapply_restoreを通した結果を自分自身の正解
+    データにするのではなく、独立に凍結されたunits_raw.jsonのja_textと
+    比較することで、apply_restore自体にリグレッションが入っても検知
+    できる（同じ関数の出力を自分自身の正解データにしてしまうと、その
+    リグレッションを検知できなくなるため。詳細はexplain.txtの
+    「■工程」(5)参照）。両キャッシュは
+    test_page_ja_md_and_candidate_detection_against_real_deeplの実行時に
+    生成されるため、未実行の場合はスキップする。
+    """
+    cache_root = Path(__file__).resolve().parent / "cache" / "sample0" / "real_deepl_output"
+    raw_path = cache_root / "04_deepl_output" / "raw_deepl_results.json"
+    units_raw_path = cache_root / "05_postprocess" / "units_raw.json"
+    if not raw_path.exists() or not units_raw_path.exists():
+        pytest.skip(
+            "実DeepLキャッシュが無いためスキップ"
+            "（test_page_ja_md_and_candidate_detection_against_real_deeplを"
+            "一度実行すると生成される）"
+        )
+
+    raw_results = {
+        tag: RawDeeplResult(raw_text=data["raw_text"], math_spans=data["math_spans"])
+        for tag, data in json.loads(raw_path.read_text(encoding="utf-8")).items()
+    }
+    units_raw_data = json.loads(units_raw_path.read_text(encoding="utf-8"))
+    expected_ja_by_tag = {d["tag"]: d["ja_text"] for d in units_raw_data}
+
+    # translatable=Falseのunit（著者名・LaTeX数式等）はparse_output_dir時点で
+    # ja_text=en_textが設定済みで、apply_restoreはtranslatable=Trueのunitしか
+    # 書き換えない。translatableなunitだけja_textを空にリセットする。
+    units = [DocUnit(**{**d, "ja_text": "" if d["translatable"] else d["ja_text"]}) for d in units_raw_data]
+    apply_restore(units, raw_results)
+
+    actual_ja_by_tag = {u.tag: u.ja_text for u in units}
+    assert actual_ja_by_tag == expected_ja_by_tag
 
 
 @pytest.mark.parametrize(

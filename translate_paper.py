@@ -25,7 +25,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from deepl_translator import TranslationBackendError, translate_with_deepl
+from deepl_translator import TranslationBackendError, apply_restore, call_deepl
 from math_protection import (
     check_unprotected_math_survival,
     protect_confirmed_single_letter_leaks,
@@ -55,7 +55,8 @@ def run_translation(units: list[DocUnit], document_context: str) -> None:
     """
     api_key = os.environ.get("DEEPL_API_KEY")
     _log("[DeepL] 文脈付き翻訳を開始します...")
-    translate_with_deepl(units, api_key, document_context, log=_log)
+    raw_results = call_deepl(units, api_key, document_context, log=_log)
+    apply_restore(units, raw_results)
     _log("[DeepL] 翻訳が完了しました。")
 
 
@@ -90,11 +91,11 @@ def translate_and_export(output_dir: str | Path) -> list[Path]:
     if protected_letters:
         _log(f"[数式チェック] 単体アルファベットの数式変数を{len(protected_letters)}件、自動的に$...$で保護しました（上記参照）。")
 
-    write_translated_pages(units, output_dir)
-
     candidates = report_untranslated_fragment_candidates(units, log=_log)
     if candidates:
         _log(f"[数式チェック] 未検出の数式らしき候補が{len(candidates)}件あります（誤検知を含む可能性があります。上記参照）。")
+
+    write_translated_pages(units, output_dir)
 
     blocks = build_blocks(units, output_dir)
     pdf_paths = render_all_pdfs(blocks, output_dir, log=_log)

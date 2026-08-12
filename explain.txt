@@ -54,13 +54,15 @@
              ├─ 1.2.2.3 exclude_references_section ……………… [9]
              ├─ 1.2.2.4 build_document_context …………………… [9]
              ├─ 1.2.2.5 run_translation [0]
-             │     └─ 1.2.2.5.1 translate_with_deepl（実DeepL通信）[11]
+             │     ├─ 1.2.2.5.1 call_deepl（実DeepL通信）………… [11]
+             │     └─ 1.2.2.5.2 apply_restore（数式復元、DeepL非依存）[11]
              └─ 1.2.2.6/.7 build_blocks／render_all_pdfs ……… [12]
                   → paper_bilingual.pdf / paper_en.pdf / paper_ja.pdf
 
   （1.3 _log は上記どの枝にも属さない横断的なユーティリティで、
     1.2/1.2.2/1.2.2.5/1.2.2.5.1/1.2.2.7から進捗ログ出力のために
-    呼ばれる。translate_paper.py [0] に実装。）
+    呼ばれる。translate_paper.py [0] に実装。apply_restore（1.2.2.5.2）
+    はDeepLへの再通信を伴わない決定的な処理のため、_logは呼ばない。）
 
 
 ■ 工程（ページ範囲決定／PDF解析／構造化・タグ処理／翻訳実行／
@@ -75,8 +77,7 @@
   された実データを使えば、外部処理を一切呼ばずに単体テストできる工程」
   を分ける実務的な境界線になっている。6工程のうち実行必須なのは
   (2)と(4)の2つだけで、残り4つ（(1)(3)(5)(6)）はいずれも外部処理なしに
-  独立してテストできる。1.2.2（translate_and_export）の子は、後述の
-  通りこの工程の順序（3→4→5→6）のまま呼び出される。
+  独立してテストできる。
 
   (1) ページ範囲の決定
       = 1.1 resolve_page_range のサブツリー全体（1.1.1〜1.1.2.3）。
@@ -96,8 +97,8 @@
       = 1.2.1.2（analyze_structure、構造解析）・1.2.1.3
       （translate_units、現状素通し）・1.2.1.4（build_document、
       成果物結合）・1.2.2.1（parse_output_dir系。1.2.2.1.1〜1.2.2.1.3
-      を含む）・1.2.2.2（exclude_references_section）・1.2.2.3
-      （build_document_context）。
+      を含む。1.2.2.1.3 write_translated_pagesも含む）・1.2.2.3
+      （exclude_references_section）・1.2.2.4（build_document_context）。
       1.2.1側（構造解析〜成果物結合）はタグ付きMarkdown
       （page_XX_en.md）を書き出す側、1.2.2側（parse_output_dir系・
       参考文献除外・文脈構築）はそれを読み込みDocUnitへ戻す側であり、
@@ -111,14 +112,15 @@
       MinerU解析やタグ処理を再実行しなくても内容を確認できる。
 
   (4) 翻訳実行（DeepL呼び出し・文脈構築含む）
-      = 1.2.2.4（run_translation）の子である1.2.2.4.1 call_deepl。
+      = 1.2.2.5（run_translation）の子である1.2.2.5.1 call_deepl。
       全unitのループ・文脈（ドキュメント全体の要約＋直近3文の履歴）の
-      構築・1文ずつ1.2.2.4.1.1 protect（数式のプレースホルダ退避、
-      DeepLへの入力準備）・DeepLの実呼び出しを行う。DeepLからの応答
-      テキストにはプレースホルダ（__MATHn__）がまだ残っており、
-      unit.tagをキーにした辞書として、テキストと数式スパンの対応表
-      （math_spans）を戻り値で返す。この時点ではunit.ja_textは
-      書き換えない。
+      構築・1文ずつ1.2.2.2.1 protect（数式のプレースホルダ退避、
+      DeepLへの入力準備。math_protection.py内、1.2.2.2 normalizeの
+      構成要素として初出済みの関数を再利用）・DeepLの実呼び出しを
+      行う。DeepLからの応答テキストにはプレースホルダ（__MATHn__）が
+      まだ残っており、unit.tagをキーにした辞書として、テキストと
+      数式スパンの対応表（math_spans）を戻り値で返す。この時点では
+      unit.ja_textは書き換えない。
       ▶ 6工程中、(2)と並んで実行必須の工程。DeepL自体の応答（言い回し
       のドリフト等）を検証したい場合はこの工程を再実行する必要がある。
       実DeepLテストでは、この工程への入力（unitごとのprotected_text・
@@ -129,19 +131,25 @@
       保存する。
 
   (5) 翻訳後処理
-      = 1.2.2.4（run_translation）のもう一方の子である1.2.2.4.2
+      = 1.2.2.5（run_translation）のもう一方の子である1.2.2.5.2
       apply_restore（(4)が返した辞書を受け取り、unitごとに数式スパンを
       使ってプレースホルダを元の数式へ復元し、unit.ja_textへ書き込む。
       DeepLへの再通信を伴わない決定的な処理で、実体はunitごとに
-      1.2.2.4.2.1 math_protection.restoreを呼ぶ）と、1.2.2.5
-      check_unprotected_math_survival（内部で1.2.2.5.1
-      find_unprotected_math_like_tokensを呼ぶ）・1.2.2.6
-      protect_confirmed_single_letter_leaks・1.2.2.7
-      report_untranslated_fragment_candidates（内部で1.2.2.7.1
+      1.2.2.2.2 restoreを呼ぶ）と、1.2.2.2.4
+      check_unprotected_math_survival（内部で1.2.2.2.3
+      find_unprotected_math_like_tokensを呼ぶ）・1.2.2.2.7
+      protect_confirmed_single_letter_leaks・1.2.2.2.6
+      report_untranslated_fragment_candidates（内部で1.2.2.2.5
       find_untranslated_fragment_candidatesを呼ぶ）。run_translation
-      （1.2.2.4）はcall_deepl（(4)）とapply_restore（(5)の先頭）という
-      2つの子を順に呼ぶだけの薄い関数であり、(4)と(5)の境界はこの
-      親子関係としてコード上に現れている。
+      （1.2.2.5）はcall_deepl（(4)、1.2.2.5.1）とapply_restore（(5)の
+      先頭、1.2.2.5.2）という2つの子を順に呼ぶだけの薄い関数であり、
+      (4)と(5)の境界はこの親子関係としてコード上に現れている。
+      なお1.2.2.2.4/1.2.2.2.6/1.2.2.2.7自体は、math_protection.pyに
+      実装されているという理由で1.2.2.2（normalize）の子として
+      番号付けされている（ファイル単位の分類方針。詳細は第2部[9][10]
+      参照）ため、番号の上では(3)工程寄りの1.2.2.2配下に位置したまま
+      である。実行順としては、これら3関数はrun_translation
+      （1.2.2.5、call_deepl→apply_restore完了後）の直後に呼ばれる。
       ▶ 4関数すべてが、DeepLを呼ばずオフラインで検証できる。
       実DeepLテストでは、この工程の出力を
       cache/<PDF>/real_deepl_output/05_postprocess/に、役割の異なる
@@ -160,29 +168,32 @@
       ことで、apply_restore自体にリグレッションが入っても検知できる
       （同じ関数の出力を自分自身の正解データにしてしまうと、そのリグレ
       ッションを検知できなくなるため）。
-      なお1.2.2.8 write_translated_pages（page_XX_ja.mdの書き出し）は
-      (5)の直後・(6)の直前に呼ばれるが、(1)が1.2の外側に置かれている
-      のと同様、6工程のいずれにも属さない独立したステップとして扱う。
+      なお1.2.2.1.3 write_translated_pages（page_XX_ja.mdの書き出し）
+      は、実行順としては(5)の直後・(6)の直前だが、番号の上では(3)の
+      1.2.2.1（parse_output_dir）の子として分類されている（parse側・
+      write側の対の関係については(3)参照）。
 
   (6) PDF生成
-      = 1.2.2.9（build_blocks）・1.2.2.10（render_all_pdfs、配下の
-      1.2.2.10.1〜1.2.2.10.3.1.1をすべて含む）。1.2.2の最後の2つの子。
+      = 1.2.2.6（build_blocks）・1.2.2.7（render_all_pdfs、配下の
+      1.2.2.7.1〜1.2.2.7.3.1.1をすべて含む）。1.2.2の最後の2つの子。
       ▶ モック翻訳済みの自作Markdownを使えば独立テスト可能（スイートG
       が既に実施）。実DeepLテストの永続キャッシュにはPDF・画像自体は
       含めない。DeepLを呼ばず、05_postprocess/のunits_raw.jsonから
       決定的に再生成できるため、恒久的に保持する必要がないからである。
 
-  まとめると、(1)〜(6)はいずれも呼び出しツリー上で1つの枝（または、
-  親1つとその直下の子だけで完結する枝）がそのまま1つの工程に対応
-  する。1.2.2（translate_and_export）の子（1.2.2.1〜1.2.2.10）も、
-  1.2.2.4の内部（call_deepl→apply_restore）も、いずれも工程の順序
-  （3→4→5→［どの工程にも属さないwrite_translated_pages］→6）と
-  一致する並びで呼ばれており、番号順がそのまま呼び出し順・工程順を
-  表す。これはmd_tag_parser.py（タグ解析）とmath_protection.py
-  （数式保護）が異なるファイルに分離されていること自体の設計判断とは
-  別の話で、「1.2.2という1つの関数が、複数の責務を持つヘルパーを
-  どの順に呼ぶか」という実行順の整理である（なぜ2ファイルに分けたか
-  の設計理由は第2部[9][10]を参照）。
+  まとめると、今回call_deepl/apply_restoreへ分割したことで、(4)と(5)は
+  少なくともrun_translation（1.2.2.5）の直下では、call_deepl
+  （1.2.2.5.1）とapply_restore（1.2.2.5.2）という明確に分かれた2つの
+  枝として呼び出しツリー上に現れるようになった。これは(1)(2)(6)が
+  単一の枝にそのまま対応するのと同じ性質を、run_translationという
+  局所的な範囲でだけ(4)(5)にも持たせたものである。一方、(5)の残り
+  （1.2.2.2.4/1.2.2.2.6/1.2.2.2.7）は、math_protection.pyという実装
+  ファイル単位でまとめる既存の分類方針（第2部[9][10]参照）に従って
+  1.2.2.2（normalize）の子のまま残っており、(3)工程寄りの番号の下に
+  位置する。この部分まで工程ごとの枝に整理し直すには、
+  math_protection.py内の関数群（1.2.2.2.1〜1.2.2.2.7）を丸ごと
+  採番し直す必要があり、それはファイル単位の分類という別の設計方針
+  そのものを見直す、今回のコード変更とは別範囲の作業になる。
 
 
 ■ 第1部の読み方
@@ -194,10 +205,13 @@
     （例:「main()内で1.1（resolve_page_range）より前に呼ばれる」）。
   - ただし兄弟番号同士の順序は、常に実行時の時系列と一致するとは
     限らない。特に1.2.2 translate_and_exportの子（1.2.2.1〜1.2.2.7）
-    は目次上の整理を優先した番号付けになっており、実際の呼び出し順は
-    1.2.2の「処理内容」に個別に記載している（例:1.2.2.2.4/1.2.2.2.6/
-    1.2.2.2.7は1.2.2.5の完了後に呼ばれる。詳細は上記「工程」の対応
-    表(3)(4)を参照）。
+    は目次上の整理（実装ファイル単位のグルーピング）を優先した番号
+    付けになっており、実際の呼び出し順は1.2.2の「処理内容」に個別に
+    記載している（例:1.2.2.2.4/1.2.2.2.6/1.2.2.2.7は、1.2.2.2
+    （normalize）の子として番号付けされているが、実行順としては
+    1.2.2.5（run_translation、子の1.2.2.5.1 call_deepl→1.2.2.5.2
+    apply_restore）の完了後に呼ばれる。詳細は上記「工程」の対応
+    表(4)(5)を参照）。
   - 各関数のブロックは必ず「入力」「出力」「処理内容」「テスト対象」
     の4項目を持つ。引数・戻り値が複数ある場合は箇条書きでそれぞれの
     意味を記す。「テスト対象: なし」は、専用の直接テストが無く、
@@ -821,28 +835,32 @@
         - output_dir: page_*_en.mdが格納されたディレクトリ
       出力: 生成されたPDFファイルパスのリスト
       処理内容: 既存のタグ付きMarkdownに対し翻訳（Step3相当）とPDF
-        生成（Step4相当）のみ実行する。run_translation直後に
+        生成（Step4相当）のみ実行する。run_translation（1.2.2.5、
+        子の1.2.2.5.1 call_deepl→1.2.2.5.2 apply_restore）直後に
         1.2.2.2.4 check_unprotected_math_survivalを呼び、未保護の
         数式らしき断片がDeepL翻訳で壊れていないかの警告ログを出す
         （処理は止めない）。続けて1.2.2.2.7 protect_confirmed_single_
         letter_leaksを呼び、翻訳後も半角のまま残った単体アルファベット
         の数式変数（"x"/"y"/"z"/"K"等）をen_text/ja_text双方の該当箇所
-        で$...$保護する（再翻訳はしない後処理）。続けて1.2.2.1.3
-        write_translated_pagesでpage_*_ja.mdを書き出し、1.2.2.2.6
+        で$...$保護する（再翻訳はしない後処理）。続けて1.2.2.2.6
         report_untranslated_fragment_candidatesで、未検出（未保護）の
-        数式らしき候補を情報ログとして出力する（いずれも処理は止めない）。
+        数式らしき候補を情報ログとして出力し（処理は止めない）、最後に
+        1.2.2.1.3 write_translated_pagesでpage_*_ja.mdを書き出す。
       テスト対象:
-        - スイートG（翻訳・PDF生成統合／DeepLモック）: 3テストとも、DeepL呼び出しをmonkeypatchでモック化した上でtranslate_and_exportを実行する。test_translate_and_export_with_mocked_deeplで、sample0.pdf実データ（`processed` fixture経由）から3種PDFが生成されること・paper_ja.pdfに日本語訳が反映されること・page_*_ja.mdが実際に生成されることを、test_translate_and_export_translates_all_translatable_unitsで、自作Markdown（翻訳対象5文）の全文に訳文が反映されている（1文でも欠けていないか）ことを、test_translate_and_export_excludes_references_sectionで、参考文献セクションが翻訳対象から除外され原文のまま残ることを確認している。
+        - スイートG（翻訳・PDF生成統合／DeepLモック）: 3テストとも、DeepL呼び出し（call_deepl）をmonkeypatchでモック化した上でtranslate_and_exportを実行する。test_translate_and_export_with_mocked_deeplで、sample0.pdf実データ（`processed` fixture経由）から3種PDFが生成されること・paper_ja.pdfに日本語訳が反映されること・page_*_ja.mdが実際に生成されることを、test_translate_and_export_translates_all_translatable_unitsで、自作Markdown（翻訳対象5文）の全文に訳文が反映されている（1文でも欠けていないか）ことを、test_translate_and_export_excludes_references_sectionで、参考文献セクションが翻訳対象から除外され原文のまま残ることを確認している。モック関数はcall_deeplの戻り値（unit.tagをキーにしたRawDeeplResultの辞書、raw_text=モック訳文・math_spans=空）を返し、実体のapply_restoreがその後実際に実行される。
         - スイートK（DeepL実課金統合テスト）:
           test_page_ja_md_and_candidate_detection_against_real_deeplは
           translate_and_export自体は呼ばず、その内部で行っているのと
           同じ手順（parse_output_dir→normalize_math→
-          exclude_references_section→run_translation相当の実DeepL
-          呼び出し→protect_confirmed_single_letter_leaks→
-          write_translated_pages→report_untranslated_fragment_
-          candidates→許可リストに基づく全数チェック。詳細は
+          exclude_references_section→build_document_context→
+          call_deepl（実DeepL呼び出し）→apply_restore→
+          protect_confirmed_single_letter_leaks→
+          report_untranslated_fragment_candidates→
+          write_translated_pages→許可リストに基づく全数チェック。詳細は
           testExplain.txtスイートK参照）を直接再現して検証している
-          （PDF生成部分は本テストの目的に不要なため省略。詳細は下記
+          （PDF生成・画像コピーは本テストの目的に不要かつDeepLを呼ばず
+          いつでも再生成できるため省略。工程ごとのキャッシュ保存先の
+          詳細は上記「■工程」の対応表(3)〜(5)を参照。詳細は下記
           1.2.2.1.3参照）。
 
       1.2.2.1 parse_output_dir（md_tag_parser.py）
@@ -887,10 +905,11 @@
             （画像系は`![tag](image_rel_path) [tag]`、それ以外は
             `[tag] ja_text`）でpage_{page:02d}_ja.mdとして書き出す。
             翻訳結果を人間が目視確認しやすくする（PDFをレンダリング
-            せずテキストのまま原文と見比べられる）ほか、
-            1.2.2.2.6 report_untranslated_fragment_candidatesの入力
-            としても使う。翻訳・PDF生成のたびに本番実行から自動的に
-            呼ばれるため、page_*_ja.mdは常に最新の翻訳結果を反映する。
+            せずテキストのまま原文と見比べられる）ためのもので、
+            1.2.2.2.4/1.2.2.2.6/1.2.2.2.7（いずれもunitsを直接
+            引数に取る）より後、1.2.2.6 build_blocksより前に呼ばれる。
+            翻訳・PDF生成のたびに本番実行から自動的に呼ばれるため、
+            page_*_ja.mdは常に最新の翻訳結果を反映する。
           テスト対象:
             - スイートC（文字列処理ユーティリティ単体テスト）:
               test_write_translated_pages_preserves_tag_formatで、
@@ -931,7 +950,9 @@
               全てが検出され、置換後のテキストに"$"が一切残らないこと
               （＝DeepLへの翻訳リクエストから確実に除外されること）を
               直接検証している。
-            - normalize/translate_with_deepl経由でも間接的に実行される。
+            - normalize/1.2.2.5.1 call_deepl（unitごとの数式保護）/
+              1.2.2.2.7 protect_confirmed_single_letter_leaks経由でも
+              間接的に実行される。
 
           1.2.2.2.1.1 _replace（math_protection.py）
             入力:
@@ -968,7 +989,9 @@
               protect→restoreのラウンドトリップが（\textless/
               \textgreaterの正規化を除き）元テキストと完全一致することを
               直接検証している。
-            - normalize/translate_with_deepl経由でも間接的に実行される。
+            - normalize/1.2.2.5.2 apply_restore（unitごとの数式復元）/
+              1.2.2.2.7 protect_confirmed_single_letter_leaks経由でも
+              間接的に実行される。
 
       1.2.2.2.3 find_unprotected_math_like_tokens（math_protection.py）
         入力:
@@ -1068,7 +1091,8 @@
           （1.2.2.2.4）とは異なり警告ではなく情報として扱い、処理は
           止めない。
         処理内容の呼び出し元: translate_and_export（1.2.2）が、
-          1.2.2.1.3 write_translated_pages直後に本番実行のたびに
+          1.2.2.2.7 protect_confirmed_single_letter_leaks直後・
+          1.2.2.1.3 write_translated_pagesより前に本番実行のたびに
           自動的に呼び出す。
         テスト対象:
           - スイートC（文字列処理ユーティリティ単体テスト）:
@@ -1108,8 +1132,8 @@
           同名の文字は二重に囲まれない。
         処理内容の呼び出し元: translate_and_export（1.2.2）が、
           1.2.2.2.4 check_unprotected_math_survival直後・
-          1.2.2.1.3 write_translated_pagesより前に本番実行のたびに
-          自動的に呼び出す。
+          1.2.2.2.6 report_untranslated_fragment_candidatesより前に
+          本番実行のたびに自動的に呼び出す。
         テスト対象:
           - スイートC（文字列処理ユーティリティ単体テスト）:
             test_protect_confirmed_single_letter_leaks_wraps_matching_
@@ -1167,23 +1191,43 @@
           - units: DocUnitのリスト（書き換え対象）
           - document_context: build_document_contextが返した文脈文字列
         出力: なし（units内のja_textを書き換える）
-        処理内容: 環境変数DEEPL_API_KEYを取得し1.2.2.5.1を呼ぶ薄いラッパー。
+        処理内容: 環境変数DEEPL_API_KEYを取得し、1.2.2.5.1 call_deeplの
+          戻り値（unit.tagをキーにしたraw_text・math_spansの辞書）を
+          1.2.2.5.2 apply_restoreへそのまま渡す、2関数を順に呼ぶだけの
+          薄いラッパー。
         テスト対象:
-          - スイートG（翻訳・PDF生成統合／DeepLモック）: 3テストとも、translate_paper.translate_with_deeplがmonkeypatchされており、run_translationはそのモック関数を呼び出す経路として実行される。
+          - スイートG（翻訳・PDF生成統合／DeepLモック）: 3テストとも、translate_paper.call_deeplがmonkeypatchされており、run_translationはそのモック関数（RawDeeplResultの辞書を返す）を呼び出した後、実体のapply_restoreへ渡す経路として実行される。
 
-        1.2.2.5.1 translate_with_deepl（deepl_translator.py）
+        1.2.2.5.1 call_deepl（deepl_translator.py）
           入力:
-            - units: DocUnitのリスト（書き換え対象）
+            - units: DocUnitのリスト（読み取りのみ、書き換えない）
             - api_key: DeepL APIキー（未設定ならNone）
             - document_context: ドキュメント全体の文脈文字列
             - log: 進捗メッセージを受け取るコールバック関数（既定はprint）
-          出力: なし（unit.ja_textを書き換える）
+          出力: unit.tagをキーにした辞書（値はRawDeeplResult
+            （raw_text: プレースホルダ__MATHn__が残ったDeepL応答
+            テキスト、math_spans: restore用の元の数式スパンのリスト）
+            のdataclass）
           処理内容: 各文をprotect（→1.2.2.2.1と同一）で数式保護し、
             直前2〜3文＋文書文脈をDeepL APIのcontext引数に渡して
-            翻訳、結果をrestore（→1.2.2.2.2と同一）で復元しja_textへ
-            設定する。障害はTranslationBackendErrorに正規化。
+            翻訳する。unit.ja_textはこの時点では書き換えない。障害は
+            TranslationBackendErrorに正規化。
           テスト対象:
-            - スイートG（翻訳・PDF生成統合／DeepLモック）: 3テストとも実体はダミー関数に差し替えられているため、DeepL API通信そのものは検証されない。検証されるのは「翻訳結果（ja_text）が正しく後続のPDF生成に反映されるか」という接続部分のみで、test_translate_and_export_translates_all_translatable_unitsはこの接続が翻訳対象文すべてに漏れなく機能しているかまで、test_translate_and_export_excludes_references_sectionは対象外の文には反映されない（原文が保たれる）ことまで確認している。
+            - スイートG（翻訳・PDF生成統合／DeepLモック）: 3テストとも実体はダミー関数に差し替えられているため、DeepL API通信そのものは検証されない。検証されるのは「翻訳結果（RawDeeplResult経由でapply_restoreが復元したja_text）が正しく後続のPDF生成に反映されるか」という接続部分のみで、test_translate_and_export_translates_all_translatable_unitsはこの接続が翻訳対象文すべてに漏れなく機能しているかまで、test_translate_and_export_excludes_references_sectionは対象外の文には反映されない（原文が保たれる）ことまで確認している。
+            - スイートK（DeepL実課金統合テスト）: test_page_ja_md_and_candidate_detection_against_real_deeplが、この戻り値をcache/<PDF>/real_deepl_output/04_deepl_output/raw_deepl_results.jsonへ保存する（詳細は上記「■工程」(4)参照）。
+
+        1.2.2.5.2 apply_restore（deepl_translator.py）
+          入力:
+            - units: DocUnitのリスト（書き換え対象）
+            - raw_results: 1.2.2.5.1 call_deeplの戻り値
+          出力: なし（unit.ja_textを書き換える）
+          処理内容: 翻訳対象unitごとに、raw_resultsから対応する
+            RawDeeplResultを取り出し、raw_textをrestore（→1.2.2.2.2と
+            同一）で復元してja_textへ設定する。DeepLへの再通信を
+            伴わない決定的な処理。
+          テスト対象:
+            - スイートG（翻訳・PDF生成統合／DeepLモック）: call_deeplがモック化された状態で、3テストとも実体のapply_restoreが実行される（上記1.2.2.5.1参照）。
+            - test_apply_restore_matches_cached_real_deepl_output: cache/sample0/real_deepl_output/04_deepl_output/raw_deepl_results.jsonと05_postprocess/units_raw.jsonを使い、DeepLを一切呼ばずapply_restoreの出力が独立に凍結されたja_textと一致することを直接検証している（詳細は上記「■工程」(5)参照）。両キャッシュはスイートKの実行時に生成されるため、未実行の場合はスキップする。
 
       1.2.2.6 build_blocks（pdf_renderer.py）
         入力:
@@ -1332,9 +1376,10 @@
     出力: なし
     処理内容: print(message, flush=True)のラッパー。1.2 run_pipeline・
       1.2.2 translate_and_export・1.2.2.5 run_translationから進捗
-      表示のため直接呼ばれるほか、1.2.2.5.1 translate_with_deeplと
+      表示のため直接呼ばれるほか、1.2.2.5.1 call_deeplと
       1.2.2.7 render_all_pdfsにはlogコールバックとして渡され、内部の
-      進捗メッセージ出力にも使われる。
+      進捗メッセージ出力にも使われる（1.2.2.5.2 apply_restoreはDeepL
+      への再通信を伴わない決定的処理のためlogを取らない）。
     テスト対象: ログ出力そのものを検証するテストは無い（print文の副作用は通常テスト対象としない）。
 
 
@@ -1584,9 +1629,9 @@
     対して元の数式へ復元する」という、翻訳エンジンから数式を守る
     という1つの責務だけに特化している。[11]（deepl_translator.py）
     と[0]（translate_paper.py）の両方から呼ばれる（1.2.2.2は
-    translate_and_export内、1.2.2.5.1のprotect/restoreはtranslate_
-    with_deepl内）横断的なユーティリティのため、どちらのファイルに
-    も属さない独立モジュールにしてある。
+    translate_and_export内、protectは1.2.2.5.1 call_deepl内、
+    restoreは1.2.2.5.2 apply_restore内）横断的なユーティリティのため、
+    どちらのファイルにも属さない独立モジュールにしてある。
     1.2.2.2.3〜1.2.2.2.6は、保護そのものではなく「保護されるべき
     数式が実際に保護・検出されているか」という一段メタな検証責務を
     持つが、数式に関するロジックという点で同じ理由からこのファイル
@@ -1609,17 +1654,21 @@
 [11] deepl_translator.py … 実際の翻訳実行
 ----------------------------------------------------------------------
   含まれる関数（第1部の番号）:
-    1.2.2.5.1 translate_with_deepl
+    1.2.2.5.1 call_deepl / 1.2.2.5.2 apply_restore
 
   なぜこのファイルにまとまっているか:
-    DeepL APIとの実際の通信という1つの責務に特化している。各文の
-    翻訳リクエストには「文書全体の文脈（タイトル＋Abstract）」と
-    「直前2〜3文の原文」をcontextパラメータとして渡し、代名詞や
+    DeepL APIとの実際の通信（call_deepl）と、その結果への数式復元
+    （apply_restore）という、翻訳実行の一連の流れに特化している。
+    各文の翻訳リクエストには「文書全体の文脈（タイトル＋Abstract）」
+    と「直前2〜3文の原文」をcontextパラメータとして渡し、代名詞や
     専門用語の訳ブレを抑える設計になっている。APIキー未設定・文字数
     上限到達・通信エラー等はすべてTranslationBackendErrorに正規化し、
     呼び出し元（[0]）がそれをSystemExitとしてユーザーに報告して
     処理を止める（CLAUDE.mdの「翻訳エンジンはDeepL固定」という要件
-    をここで担保している）。
+    をここで担保している）。call_deeplとapply_restoreを2つの関数に
+    分けているのは、DeepLへの実通信（call_deepl）とDeepLを一切
+    呼ばない決定的な数式復元（apply_restore）とで、単体テスト時に
+    必要な外部依存が異なるため（詳細は上記「■工程」(4)(5)参照）。
 
   誰が呼ぶか: translate_paper.py（1.2.2.5 run_translation経由）。
 
@@ -1661,9 +1710,10 @@
     かを検証する、開発者向けの自動テストという1つの責務に特化して
     いる。CLAUDE.mdの運用規定により、DeepL呼び出し自体はモック化
     され、有料APIキーを消費しないようになっている（課金対象の
-    deepl_translator.translate_with_deepl（1.2.2.5.1）は実際には
-    呼ばれず、テスト用のダミー関数に差し替えられる）。各テスト
-    スイート（A〜K）の詳細はtestExplain.txtを参照。
+    deepl_translator.call_deepl（1.2.2.5.1）は実際には呼ばれず、
+    テスト用のダミー関数に差し替えられる。差し替え後は実体の
+    apply_restore（1.2.2.5.2）がそのダミーの戻り値に対して実行される）。
+    各テストスイート（A〜K）の詳細はtestExplain.txtを参照。
 
   誰が呼ぶか: 開発者（pytestコマンド、またはClaude Codeの自律修正
               ループ）。
