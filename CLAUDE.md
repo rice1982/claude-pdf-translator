@@ -41,7 +41,7 @@ PDFから本文、画像、メタデータを分離・抽出・翻訳（DeepL）
    - DeepL API のみを使用して翻訳する。
 5. ページ範囲指定（長大PDF/書籍対策）:
    - 物理ページ指定: `--start` および `--end` 引数（数値）で絶対インデックス範囲を指定。
-   - 印刷ページラベル指定: `--start-label` および `--end-label` 引数で、PDF内の印刷表記（"cov", "i"?"xviii", "36" 等）による範囲を指定可能にする。物理ページ番号との相互互換性を維持すること。
+   - 印刷ページラベル指定: `--start-label` および `--end-label` 引数で、PDF内の印刷表記（"cov", "i"〜"xviii", "36" 等）による範囲を指定可能にする。物理ページ番号との相互互換性を維持すること。
    - 指定されたページ範囲のみを抽出し、高速・安全に処理を完了させること。
 6. ナンバリング（ID付与）と出力:
    - 各文に `[P{page_num}-S{sentence_num}]` のID（物理ページ番号ベース）を付与。
@@ -60,24 +60,27 @@ PDFから本文、画像、メタデータを分離・抽出・翻訳（DeepL）
 3. **テスト実行指示・デフォルト翻訳エンジン**:
    - 通常の開発ループでは `pytest` または `sample0.pdf` を用いた高速な動作確認を中心に行い、章・範囲単位の確認が必要な場合のみ `sample3.pdf` の指定範囲を実行すること。
    - **`pytest` 実行時のテスト翻訳では、DeepLの有料APIキーを消費しないよう、DeepL呼び出し自体をモック化して自動化すること。**
-   - **例外**: `sample0.pdf`を対象に、実際のDeepL翻訳結果でしか検証できない項目（例: `page_XX_ja.md`の生成・未検出の数式らしき候補の検出が、実際のDeepL翻訳結果に対しても正しく機能するかの確認）に限り、DeepLを実課金でモック化せずに呼び出すテストを許可する。**この例外は`sample0.pdf`・`sample1.pdf`（下記の追加条件付き）を用いるテストに限定し**、`sample2.pdf`・`sample3.pdf`や、既存のDeepLモック前提のテスト（スイートG等）には適用しない（`sample3.pdf`は239ページの大型書籍であり、項目2の全体一括処理禁止規定と、実DeepLフルチェックが既存の正しい数式保護の描画結果まで変えてしまうリスクを踏まえ、実DeepLフルチェックの対象には含めないこととした）。
-     - `sample1.pdf`向け（`test_page_ja_md_and_candidate_detection_against_real_deepl_sample1`）: sample0.pdfはsample1.pdfの最初の2ページを抽出したものであり、本テストはsample0の内容を完全に包含するスーパーセットである。9ページ分の実DeepL翻訳が毎回発生しsample0版より高コストなため、コード・許可リストは維持するが日常の開発ループでは実行しない。広いカバレッジでの確認が必要な限定的な場面でのみ`-k`で明示的に指定して実行すること。
+   - **例外**: `sample0.pdf`を対象に、実際のDeepL翻訳結果でしか検証できない項目（例: `page_XX_ja.md`の生成・未検出の数式らしき候補の検出が、実際のDeepL翻訳結果に対しても正しく機能するかの確認）に限り、DeepLを実課金でモック化せずに呼び出すテストを許可する。**この例外は`sample0.pdf`・`sample1.pdf`（下記の追加条件付き）を用いるテストに限定し**、`sample2.pdf`・`sample3.pdf`や、DeepLモック前提のテスト（`test_translate_and_export_with_mocked_deepl`等）には適用しない（`sample3.pdf`は239ページの大型書籍であり、項目2の全体一括処理禁止規定と、実DeepL実行が既存の正しい数式保護の描画結果まで変えてしまうリスクを踏まえ、実DeepLテストの対象には含めないこととした）。
+     - `sample1.pdf`向け（`test_run_pipeline_end_to_end_with_real_deepl`のsample1ケース）: sample0.pdfはsample1.pdfの最初の2ページを抽出したものであり、本ケースはsample0の内容を完全に包含するスーパーセットに対して実行される。9ページ分の実DeepL翻訳が毎回発生しsample0版より高コストなため、日常の開発ループでは実行せず、`-k`で明示的に指定した場合のみ実行すること。
+   - **実DeepL課金テストの実行前確認（AIによる自律実行の禁止）**: 上記の例外に該当する実DeepLテスト（`test_run_pipeline_end_to_end_with_real_deepl`のsample0/sample1ケース等、名称に`real_deepl`を含むテストや、それに準ずる実課金コマンド）は、`.env`にDEEPL_API_KEYが設定済みであっても、AI（Claude Code）が自らの判断で実行してはならない。実行する前に必ず人間へその旨を伝え、明示的な許可を得ること。フルスイート実行（`pytest`単体実行）はこれらを自動的に含んでしまうため、本項目5・7の規定（関連テストのみを`-k`等で限定して実行する）を徹底し、実DeepLテストを対象に含める場合は個別に許可を取った上で`-k`で明示的に指定すること。
 4. **未保護インライン数式のフルチェック（許可リストの運用）**:
-   - `test_page_ja_md_and_candidate_detection_against_real_deepl`（test_translator.py）は、`sample0.pdf`の実際のDeepL翻訳結果全体から`math_protection.find_untranslated_fragment_candidates`で未保護の数式らしき候補を洗い出し、`KNOWN_FALSE_POSITIVE_FRAGMENTS`（固有名詞・略語・列挙記号）／`KNOWN_LEAKED_MATH_FRAGMENTS`（本物の未保護数式）という2つの許可リストに無い未知の候補が出たら失敗する回帰テストである。
-   - DeepLの翻訳結果は完全に決定的ではないため、言い回しの変化によりこのテストが失敗することがある。失敗時は人間が実際の`page_XX_ja.md`・原文PDFを目視確認し、新しい候補を上記いずれかの許可リストへ追加すること。**内容を確認せず機械的にリストへ追加してテストを通すことは禁止する**（本テストの目的（未保護の数式漏れの検知）を損なうため）。
+   - 「実際にDeepLを呼んでcache/配下へ結果を記録すること」と「その結果に対して許可リスト突合を行うこと」は別のテストに分かれている。前者は`test_run_pipeline_end_to_end_with_real_deepl`（sample0/sample1限定）が担い、実行するたびに実際に課金される。後者は`test_untranslated_fragment_candidates_against_cached_deepl_output`（test_translate_paper.py）が担い、cache/配下に残っている最新の記録を読むだけでDeepLは一切呼ばないため無課金であり、日常の開発ループで気軽に実行してよい（対応する記録が無い場合はスキップされる）。
+   - `test_untranslated_fragment_candidates_against_cached_deepl_output`は、記録された実際のDeepL翻訳結果から`math_protection.find_untranslated_fragment_candidates`で未保護の数式らしき候補を洗い出し、`KNOWN_FALSE_POSITIVE_FRAGMENTS`（固有名詞・略語・列挙記号）／`KNOWN_LEAKED_MATH_FRAGMENTS`（本物の未保護数式）という2つの許可リストに無い未知の候補が出たら失敗する回帰テストである。
+   - DeepLの翻訳結果は完全に決定的ではないため、言い回しの変化により、記録が更新されるたびにこのテストが失敗することがある。失敗時は人間が実際の`page_XX_ja.md`・原文PDFを目視確認し、新しい候補を上記いずれかの許可リストへ追加すること。**内容を確認せず機械的にリストへ追加してテストを通すことは禁止する**（本テストの目的（未保護の数式漏れの検知）を損なうため）。目視確認する`page_XX_ja.md`は、`protect_confirmed_single_letter_leaks`適用**後**の最終版（`output_dir`側。存在する場合）を優先する。`cache/.../05_postprocess/page_XX_ja.md`は同適用**前**のスナップショットのため、単体アルファベット数式変数の保護有無が異なる点に注意。
    - 本物の数式漏れ（`KNOWN_LEAKED_MATH_FRAGMENTS`）は、可能な限り許可リストへの追加ではなく`pdf_text_utils.py`/`math_protection.py`側での自動`$...$`保護の実装を優先すること。ギリシャ文字（`wrap_bare_greek_letters`）、「1文字の変数 = 値」形式の数式的表現（例:"t = 1"、`wrap_bare_letter_equals_expressions`）、翻訳後も半角のまま残る単体アルファベット変数（`protect_confirmed_single_letter_leaks`）は既にこの方針で自動保護済みであり、許可リストへの追加は「実在の固有名詞・略語と自動判別できない場合（例:"DiT","NMS"）」「英字を含まない裸の数字1文字等、パターンとして機械的に切り出せない場合」の最終手段として運用する。
 5. **実データ依存テストと汎用ロジックテストの分離**:
    - `resolve_chapter_page_range`（章番号→ページ範囲）や`resolve_physical_page`（印刷ページラベル→物理ページ番号）のように、特定の論文・書籍の内容には依存しないはずの汎用アルゴリズムを検証する場合、ダウンロードした実サンプルPDF（`sample1`〜`sample3.pdf`）の実際の目次・ページラベル構成に期待値を直接ハードコードしてはならない。実PDFの内容変化（著者の改訂、当初の期待値の転記ミス等）でコードは正しいままテストだけが壊れるリスクがあるため（実際に本プロジェクトで発生した）。
-   - 代わりに、`fitz`（PyMuPDF）でテスト実行時に組み立てる目次・印刷ページラベルのみを持つ使い捨ての合成PDF（`test_translator.py`の`_build_synthetic_toc_pdf`/`_build_synthetic_labeled_pdf`参照）を使い、アルゴリズムの性質だけを決定的に検証すること。
+   - 代わりに、`fitz`（PyMuPDF）でテスト実行時に組み立てる目次・印刷ページラベルのみを持つ使い捨ての合成PDF（`test_translate_paper.py`の`_build_synthetic_toc_pdf`/`_build_synthetic_labeled_pdf`参照）を使い、アルゴリズムの性質だけを決定的に検証すること。
    - ただし「実際の論文・書籍PDFでMinerU/fitzが正しく読み取れているか」という統合的な確認自体は不要にはならないため、各アルゴリズムにつき最低1テストは意図的に実データ（`sample2.pdf`/`sample3.pdf`）のまま残し、全件を合成データに置き換えないこと。
 6. **MinerU実行結果のローカルキャッシュ運用**:
    - MinerUの実行結果（`content_list.json`相当のデータおよび抽出画像）は、著作権上の理由から`input/`・`output/`と同様にgit管理対象外とする（`cache/`、`.gitignore`で除外済み）。手動編集・コミットは禁止する。
    - キャッシュキーには対象PDFファイルのSHA-256ハッシュ・ページ範囲・MinerUバージョンを含み、いずれかが変化した場合は自動的にキャッシュを無効化し再実行する。手動でのキャッシュ破棄・鮮度管理は不要。
    - キャッシュ機構（`mineru_cache.py`/`mineru_version.py`）は速度最適化のみを目的とし、読み込み・保存いずれの失敗時も必ず通常のMinerU実行にフォールバックする。挙動を疑う場合は環境変数`MINERU_CACHE_DISABLE=1`で無効化して実行できる。
    - MinerUバージョン更新時は自動的に実データでの再実行が強制されるため、項目5の「実データを用いた最低1テスト」の要件と矛盾しない。ディスク容量が気になる場合は`cache/`ごと削除してよい（次回実行時に自動再生成される）。
+   - `cache/<PDFファイル名>_<範囲記述子>/`配下には、MinerUキャッシュ（`mineru_cache/`）のきょうだいとして、実際にDeepLを呼んだ際の送受信内容が`real_deepl_output_<実行日時>/`にも記録される（`translate_paper.py`の`run_pipeline`/`translate_and_export`自体が備える機能で、人間による本実行と、テストの中では全体テストの実DeepL版`test_run_pipeline_end_to_end_with_real_deepl`のいずれから呼ばれた場合でも同様に生成する。他のテストは実DeepLを呼ばないため生成しない）。こちらも`cache/`と同様にgit管理対象外・手動編集禁止。実行のたびにタイムスタンプ付きの新しいフォルダに書き込まれるため過去の記録は上書きされない。
 7. **開発ループでの実行範囲の限定**:
    - 変更が特定のモジュール・機能に閉じている場合は、フルテストスイート（`pytest`単体実行）ではなく、関連するテストファイル・テスト関数のみを`pytest <file>`や`-k <pattern>`で限定して実行すること。
-   - フルスイートを不必要に繰り返し実行すると、実DeepL課金テスト（`sample0.pdf`限定、項目3の例外）の重複実行につながる。変更の影響範囲を見極め、必要最小限のテストのみを実行すること。
+   - フルスイートを不必要に繰り返し実行すると、実DeepL課金テスト（`sample0.pdf`/`sample1.pdf`限定、項目3の例外）の重複実行につながる。変更の影響範囲を見極め、必要最小限のテストのみを実行すること。
 
 ## Code Standards
 - Python 3.13+

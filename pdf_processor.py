@@ -50,6 +50,7 @@ def process_pdf(
     translate: TranslateFunc = identity_translator,
     start_page: int | None = None,
     end_page: int | None = None,
+    range_label: str | None = None,
 ) -> list[Path]:
     """PDFを解析し、ページ別Markdown（文ID・画像切り出し付き）を出力する。
 
@@ -69,6 +70,10 @@ def process_pdf(
             はPDFの先頭ページから処理する。
         end_page: 処理対象の終了ページ番号（1始まり・両端含む）。``None``
             （省略時）はPDFの末尾ページまで処理する。
+        range_label: cache/配下のフォルダ名を人間可読にするための任意の
+            範囲記述子（例:"full","label55-60"）。省略時は
+            :mod:`mineru_cache` の従来の命名を使う。キャッシュの正当性判定
+            には影響しない。
 
     Returns:
         生成されたMarkdownファイルパスのリスト（ページ順）。
@@ -100,9 +105,11 @@ def process_pdf(
 
         # ステップ1: MinerU実行
         if page_range_specified:
-            mineru_output = run_mineru(pdf_path, work_dir, first_page - 1, last_page - 1)
+            mineru_output = run_mineru(
+                pdf_path, work_dir, first_page - 1, last_page - 1, range_label=range_label
+            )
         else:
-            mineru_output = run_mineru(pdf_path, work_dir)
+            mineru_output = run_mineru(pdf_path, work_dir, range_label=range_label)
 
         # ステップ2: 構造解析
         page_offset = (first_page - 1) if page_range_specified else 0

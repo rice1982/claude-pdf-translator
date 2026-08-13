@@ -90,9 +90,10 @@ def build_blocks(units: list[DocUnit], output_dir: Path) -> list[Block]:
             image_uri = _image_data_uri(output_dir, unit.image_rel_path) if unit.image_rel_path else None
             blocks.append(Block(kind="figure", sentences=[unit], image_data_uri=image_uri))
         elif unit.kind == "equation_image":
-            continue  # 対応するequation_latexブロックをKaTeXで描画するため画像は出力しない
-            # （2026-08-10変更。MinerUの画像切り出し範囲には\tag{n}の式番号が
-            # 含まれないため、番号を含む正しいLaTeX（equation_latex）側で描画する）
+            # MinerUの画像切り出し範囲には\tag{n}の式番号が含まれないため、
+            # 番号を含む正しいLaTeX（equation_latex）側で描画する。対応する
+            # equation_latexブロックをKaTeXで描画するため、画像は出力しない。
+            continue
         elif unit.kind == "equation_latex":
             flush()
             blocks.append(Block(kind="equation", sentences=[unit]))

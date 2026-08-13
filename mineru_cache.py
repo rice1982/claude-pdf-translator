@@ -39,15 +39,28 @@ _CACHE_ROOT = _REPO_ROOT / "cache"
 _CACHE_SCHEMA_VERSION = 1
 
 
-def _run_id(pdf_path: Path, start_page: int | None, end_page: int | None) -> str:
+def _run_id(
+    pdf_path: Path, start_page: int | None, end_page: int | None, range_label: str | None = None
+) -> str:
     stem = pdf_path.stem
+    if range_label is not None:
+        # range_labelは呼び出し側（translate_paper.describe_page_range）が
+        # 元のCLIオプション（--chapter/--start-label/--start等）から組み立てる
+        # 人間可読な範囲記述子（例:"full","label55-60"）。指定があれば、
+        # 生のページ番号ベースの命名より優先する（cache/配下のフォルダ名を
+        # 人間が見て分かりやすくするため）。キャッシュの正当性チェック自体は
+        # 引き続きstart_page/end_page（meta.json）で行うため、フォルダ名を
+        # 変えても正しさには影響しない。
+        return f"{stem}_{range_label}"
     if start_page is None and end_page is None:
         return stem
     return f"{stem}_p{start_page}_{end_page}"
 
 
-def _cache_dir(pdf_path: Path, start_page: int | None, end_page: int | None) -> Path:
-    return _CACHE_ROOT / _run_id(pdf_path, start_page, end_page) / "mineru_cache"
+def _cache_dir(
+    pdf_path: Path, start_page: int | None, end_page: int | None, range_label: str | None = None
+) -> Path:
+    return _CACHE_ROOT / _run_id(pdf_path, start_page, end_page, range_label) / "mineru_cache"
 
 
 def _compute_pdf_hash(pdf_path: Path) -> str:
@@ -62,15 +75,20 @@ def load_cached_items(
     pdf_path: Path,
     start_page: int | None,
     end_page: int | None,
+    range_label: str | None = None,
 ) -> tuple[list[dict], Path] | None:
     """キャッシュがあり、かつPDFの中身・MinerUバージョンが一致すれば
     ``(items, images_base)``を返す。キャッシュが無い・古い・壊れている
     場合は``None``を返し、呼び出し側に通常実行を促す。
+
+    ``range_label``はフォルダ名の組み立てにのみ使う（save_cache参照）。
+    キャッシュの正当性判定自体は従来通りstart_page/end_page（と
+    pdf_sha256・mineru_version）で行う。
     """
     if not _cache_enabled():
         return None
 
-    cache_dir = _cache_dir(pdf_path, start_page, end_page)
+    cache_dir = _cache_dir(pdf_path, start_page, end_page, range_label)
     meta_path = cache_dir / "meta.json"
     content_list_path = cache_dir / "content_list.json"
     # cache_dir自体を images_base 相当として返す（cache_dir/"images"/<file>が
@@ -109,11 +127,16 @@ def save_cache(
     end_page: int | None,
     items: list[dict],
     images_base: Path,
+    range_label: str | None = None,
 ) -> None:
     """MinerUの実行結果をキャッシュへ保存する。
 
     一時ディレクトリへ書き込んでから``rename``でアトミックに差し替える
     ことで、書き込み途中の中断による破損キャッシュの混入を防ぐ。
+
+    ``range_label``を指定すると、フォルダ名が``{stem}_{range_label}``
+    （例:"sample3_label55-60"）になり、生のページ番号ベースの命名
+    （``{stem}_p{開始}_{終了}``）より人間が読みやすくなる。省略時は従来通り。
     """
     if not _cache_enabled():
         return
@@ -124,7 +147,7 @@ def save_cache(
     except (OSError, MinerUVersionError):
         return
 
-    cache_dir = _cache_dir(pdf_path, start_page, end_page)
+    cache_dir = _cache_dir(pdf_path, start_page, end_page, range_label)
     tmp_dir = cache_dir.with_name(cache_dir.name + ".tmp")
 
     try:

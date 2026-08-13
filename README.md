@@ -65,10 +65,10 @@
    参考情報としてご自身で`page_XX_ja.md`と原本PDFを見比べて判断して
    ください。いずれも処理は止まりません。
 
-   詳細は`testExplain.txt`のスイートC・K・explain.txtのmath_protection.py
-   （[10]）・pdf_text_utils.py（[5]）を参照してください。`test_translator.py`の
-   `test_page_ja_md_and_candidate_detection_against_real_deepl`では、
-   実際のDeepL翻訳結果に対して(b)で検出される候補が、人間確認済みの
+   詳細はexplain.txtのmath_protection.py（[10]）・pdf_text_utils.py（[5]）
+   を参照してください。`test_translate_paper.py`の
+   `test_untranslated_fragment_candidates_against_cached_deepl_output`
+   では、実際のDeepL翻訳結果に対して(b)で検出される候補が、人間確認済みの
    許可リスト（誤検知／本物の数式漏れ）の範囲内に収まっているかを
    継続的に検証しています。
 
@@ -107,7 +107,7 @@
 ※ 表の下に印字される脚注（例:"*Our own implementation..."）は、
   内容が失われることはありませんが、表キャプションの続き文として
   結合され出力されます（キャプションと脚注を意味的に区別する
-  タグは無い）。詳細は`testExplain.txt`のスイートDを参照してください。
+  タグは無い）。詳細は`testExplain.txt`の「工程(3)」を参照してください。
 
 ※ "Table 1. Correspondences..."のようにピリオドで区切られた
   キャプションは、文分割ロジックの略語リストの都合上、"Table 1."と
@@ -133,7 +133,7 @@
   いるかを手がかりに人間が判断できますが、元のLaTeXソースが本当に
   数式モードだったかをPDFの見た目だけから完全に証明することは
   できません（単純な1文字の変数などは判断材料が乏しくなります）。
-  詳細は`testExplain.txt`のスイートBを参照してください。
+  詳細は`testExplain.txt`の「工程(3)」を参照してください。
 
 ※ 既知の限界: "$...$"で保護されず、かつ英字/ギリシャ文字を伴わない
   裸の数字1つだけの数式漏れ（例: "...to 0 with K discrete steps"の
@@ -141,7 +141,7 @@
   意図的に(b)の検出対象外としており、自動保護もされません。
 
 ※ この数式描画結果（PDFに実際に正しく描画されているか）を検証する
-  自動テストは存在せず、`testExplain.txt`のスイートAが示す通り、
+  自動テストは存在せず、`testExplain.txt`の「工程(6)」に記載の通り、
   出力PDFを開いての人間による目視確認が必要です。
 
 
@@ -201,11 +201,15 @@ venv\Scripts\Activate.ps1
 有効化すると、プロンプトの先頭に `(venv)` が表示されます。以降は以下の形式で実行します。
 
 ```
-python translate_paper.py <PDFファイルのパス> <出力先ディレクトリ> [オプション]
+python translate_paper.py <PDFファイルのパス> [出力先ディレクトリ] [オプション]
 ```
 
 `<出力先ディレクトリ>` が既存の場合は中身が上書き再生成されます。
-存在しない場合は自動的に作成されます。
+存在しない場合は自動的に作成されます。省略した場合は
+`output\manual_{PDF名}_{範囲記述子}_{実行日時}`という名前で自動生成されます
+（`--chapter`/`--start`・`--end`/`--start-label`・`--end-label`の指定内容から
+範囲記述子が決まります。例: 範囲指定なしなら`full`、`--start-label 55
+--end-label 60`なら`label55-60`）。
 
 ※ 仮想環境を有効化せずに実行したい場合は、`venv\Scripts\python.exe` を直接指定しても同様に動作します（本マニュアルの他のコマンド例も同じ考え方で読み替え可能です）。
 
@@ -323,7 +327,7 @@ venv\Scripts\python setup_inputs.py
   （https://arxiv.org/pdf/2409.00102v1 ）から都度ダウンロードします。
   バージョンを`v1`に明示固定しており、著者が将来この論文を改訂しても
   取得内容（ページ構成・キャプション文言等）が変わらないようにして
-  います（`test_translator.py`のsample2.pdf依存テストはこの内容を
+  います（`test_translate_paper.py`のsample2.pdf依存テストはこの内容を
   前提にハードコードされているため）。
 - `sample3.pdf`をSpringer（オープンアクセス書籍）の公式URL
   （https://link.springer.com/content/pdf/10.1007/978-981-95-1327-7.pdf ）
@@ -364,11 +368,12 @@ venv\Scripts\python setup_inputs.py
 ### MinerU実行結果のローカルキャッシュについて
 
 MinerUによるPDF解析結果（`content_list.json`相当のデータおよび抽出画像）は、
-`cache/<PDFファイル名>[_p{開始ページ}_{終了ページ}]/mineru_cache/`に
-自動的にキャッシュされます。このキャッシュは`pytest`実行と、
-`pdf_processor.py`/`translate_paper.py`による手動実行のどちらからも
-共有されます（対象PDFファイルの内容・ページ範囲・MinerUのバージョンが
-一致する限り再利用されます）。
+`cache/<PDFファイル名>_<範囲記述子>/mineru_cache/`に自動的にキャッシュ
+されます（範囲記述子は`--chapter`/`--start`・`--end`/`--start-label`・
+`--end-label`の指定内容から決まります。例:"full"、"label55-60"）。この
+キャッシュは`pytest`実行と、`pdf_processor.py`/`translate_paper.py`による
+手動実行のどちらからも共有されます（対象PDFファイルの内容・ページ範囲・
+MinerUのバージョンが一致する限り再利用されます）。
 
 - 初回実行時は通常通りMinerUが起動するため時間がかかりますが、2回目以降、
   同一PDF・同一ページ範囲・同一MinerUバージョンでの実行はキャッシュから
@@ -381,12 +386,22 @@ MinerUによるPDF解析結果（`content_list.json`相当のデータおよび�
 - `cache/`は`input/`・`output/`と同様、著作権上の理由から`.gitignore`で
   除外されておりGit管理対象外です。ディスク容量が気になる場合は
   `cache/`ごと削除しても問題ありません（次回実行時に自動再生成されます）。
+- 翻訳を実行するたびに、DeepLとの実際の送受信内容が同じ
+  `cache/<PDFファイル名>_<範囲記述子>/`配下の
+  `real_deepl_output_<実行日時>/`（`mineru_cache/`のきょうだいフォルダ）
+  にも記録されます。単体アルファベット数式変数への`$...$`保護（[主な機能]
+  参照）が適用される直前の状態の`page_XX_en.md`/`page_XX_ja.md`も
+  人間が読める形式で含まれるため、翻訳内容を後から見直したい場合や、
+  未保護の数式らしき候補を確認したい場合に利用できます（保護適用後の
+  最終版は、通常通り出力先ディレクトリの同名ファイルで確認できます）。
+  こちらは実行のたびにタイムスタンプ付きの新しいフォルダに書き込まれる
+  ため、過去の実行結果を上書きすることはありません。
 
 ### テスト（pytest）の実行について
 
-`test_translator.py`のテストスイートの一部は、`input/sample0.pdf`〜
+`test_translate_paper.py`のテストの一部は、`input/sample0.pdf`〜
 `sample3.pdf`という特定のサンプルPDFを前提に書かれています（詳細は
-`testExplain.txt`の各スイートの「該当関数」欄を参照）。前述の通り、
+`testExplain.txt`の各項目の「該当関数」欄を参照）。前述の通り、
 著作権の都合上これらのサンプルPDFは本リポジトリに含まれていないため、
 **`input/`フォルダにこれらのファイルを配置しない限り、該当するテストは
 実行できません**。対象PDFが存在しない場合の挙動はテストによって異なり、
@@ -403,12 +418,11 @@ MinerUによるPDF解析結果（`content_list.json`相当のデータおよび�
 `fitz`（PyMuPDF）で組み立てる目次・印刷ページラベルのみを持つ使い捨ての
 合成PDFを使って検証しており、これらは`input/`フォルダにサンプルPDFが
 無くても実行できます。実際の学術論文・書籍PDFに対する統合的な確認（目次や
-印刷ページラベルを`fitz`が正しく読み取れているか）は、各スイートにつき
-1テストだけ意図的に実データ（`sample2.pdf`/`sample3.pdf`）のまま残して
-います。test_translator.py全体（parametrize展開後92ケース）のうち、実際に
-ダウンロードしたPDFの中身に依存しているのは約3割（29ケース）にとどまり、
-残りは合成データまたはPDFを使わない純粋なロジックテストです（内訳は
-testExplain.txtの「実データ依存度」参照）。
+印刷ページラベルを`fitz`が正しく読み取れているか）は、各アルゴリズムに
+つき1テストだけ意図的に実データ（`sample2.pdf`/`sample3.pdf`）のまま残して
+います。test_translate_paper.py全体のうち、実際にダウンロードしたPDFの
+中身に依存しているのは一部のみで、残りは合成データまたはPDFを使わない
+純粋なロジックテストです（内訳はtestExplain.txt参照）。
 
 pytestをそのまま実行できるようにしたい場合は、前述の「テストデータの
 準備方法」の`setup_inputs.py`を実行するか、`sample0.pdf`〜`sample3.pdf`
@@ -458,7 +472,7 @@ input\                    … 処理対象PDFの配置先（著作権の都合�
   呼び出される全関数を呼び出し順に番号付けした一覧（各関数の入力・
   出力・処理内容・テスト対象を記載）と、各スクリプトファイルがなぜ
   その関数群を持つのか（ファイル分割の設計意図）の2部構成。
-- **`testExplain.txt`**: `test_translator.py`の各テストスイートが
+- **`testExplain.txt`**: `test_translate_paper.py`の各テストが
   何を検証しているか、`explain.txt`のどの関数に対応するか、その
   期待値がどの程度信頼できるか（実データのOCR結果をそのまま期待値に
   していないか等の「検証カテゴリ」）をまとめたドキュメント。

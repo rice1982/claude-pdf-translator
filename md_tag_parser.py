@@ -102,12 +102,11 @@ def parse_output_dir(output_dir: Path) -> list[DocUnit]:
 
 def write_translated_pages(units: list[DocUnit], output_dir: Path) -> list[Path]:
     """翻訳済み（ja_text設定済み）のunitsを、page_*_en.mdと同じタグ形式で
-    page_*_ja.mdとして書き出す（2026-08-09追加）。あわせて、翻訳後の
-    後処理（math_protection.protect_confirmed_single_letter_leaks等）で
-    en_textが更新されている場合に備え、page_*_en.mdも現在のen_textで
-    上書きする（2026-08-10追加。従来はja.mdのみ書き出しており、Step1
-    （process_pdf）時点のen.mdが翻訳後の保護処理を反映しないという
-    不一致があったため）。
+    page_*_ja.mdとして書き出す。あわせて、翻訳後の後処理
+    （math_protection.protect_confirmed_single_letter_leaks等）でen_textが
+    更新されている場合に備え、page_*_en.mdも現在のen_textで上書きする
+    （そうしないと、process_pdf（Step1）時点のen.mdが翻訳後の保護処理を
+    反映しないままになってしまう）。
 
     parse_page_fileの逆変換にあたる。翻訳結果を人間が目視確認しやすく
     する（PDFをレンダリングせずテキストのまま原文と見比べられる）ほか、

@@ -40,6 +40,7 @@ def run_mineru(
     work_dir: Path,
     start_page: int | None = None,
     end_page: int | None = None,
+    range_label: str | None = None,
 ) -> MinerUOutput:
     """MinerUをサブプロセスとして実行し、content_list.jsonと画像群を取得する。
 
@@ -51,6 +52,11 @@ def run_mineru(
             先頭ページから処理する。
         end_page: 処理対象の終了ページ（0始まり・両端含む）。``None``なら
             末尾ページまで処理する。
+        range_label: cache/配下のフォルダ名を人間可読にするための任意の
+            範囲記述子（例:"full","label55-60"）。省略時は
+            :mod:`mineru_cache` の従来の命名（ページ番号ベース）を使う。
+            キャッシュの正当性判定には影響しない（start_page/end_pageで
+            行う）。
 
     Returns:
         MinerUOutput（content_list要素列と画像の基準ディレクトリ）。
@@ -68,7 +74,7 @@ def run_mineru(
         から返るため、``work_dir``にMinerUの生出力が書き込まれないことが
         ある。呼び出し側の型・戻り値仕様はキャッシュの有無によらず不変。
     """
-    cached = load_cached_items(pdf_path, start_page, end_page)
+    cached = load_cached_items(pdf_path, start_page, end_page, range_label=range_label)
     if cached is not None:
         items, images_base = cached
         return MinerUOutput(items=items, images_base=images_base)
@@ -98,5 +104,5 @@ def run_mineru(
 
     items = json.loads(content_list_path.read_text(encoding="utf-8"))
     images_base = content_list_path.parent
-    save_cache(pdf_path, start_page, end_page, items, images_base)
+    save_cache(pdf_path, start_page, end_page, items, images_base, range_label=range_label)
     return MinerUOutput(items=items, images_base=images_base)
