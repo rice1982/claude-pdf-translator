@@ -1,0 +1,1580 @@
+======================================================================
+ テストコード（testCode/）の説明
+ 各テストが調べていること・どの関数をテストしているか
+======================================================================
+
+■ テスト実行方法
+
+  本ファイル（およびtestCode/配下の各テストファイル）の詳細説明を読む前に、まず
+  「何を実行すればテスト・本実行それぞれが完了するのか」をここに
+  まとめる。各コマンドが具体的に何を検証するかの詳細は、後続の各
+  セクション説明、および末尾の「■ まとめ表」を参照。
+
+  1. 自動テスト（pytest）
+
+     venv\Scripts\python -m pytest -k "not real_deepl"
+
+     testCode/配下のtest_関数を一括実行する（`-k "not
+     real_deepl"`で、名称に`real_deepl`を含む実課金テストを除外する。
+     CLAUDE.mdの規定により、この種のテストはAIが自らの判断で実行して
+     はならない）。無課金のテストはDeepLをモック化しているか、DeepLを
+     一切呼ばずcache/配下の既存記録を読むだけかのいずれかである。
+
+     実際にDeepL APIを呼ぶテストは
+     `test_run_pipeline_end_to_end_with_real_deepl`（sample0/sample1
+     ケースのみ。CLAUDE.mdの例外規定による）に一本化されている。
+     sample1ケースは9ページ分の実翻訳が発生し高コストなため、日常の
+     開発ループでは実行せず`-k`での明示的な指定時のみ実行する運用と
+     している（sample2.pdf・sample3.pdfは対象外）。実行にあたっては
+     `.env`にDEEPL_API_KEYが設定されている必要があり（未設定時は
+     pytest.skipで穏やかにスキップされる）、CLAUDE.mdの規定により
+     実行前に必ず人間の明示的な許可を得ること。
+
+     input/sample0.pdf〜sample3.pdfが未配置の場合の挙動はテストにより
+     異なる（詳細は次項「前提（サンプルPDFについて）」参照）。サンプル
+     PDFの準備方法はREADME.mdの「テストデータの準備方法」を参照。
+
+  2. 本実行（手動目視確認が必要な項目の確認用）
+
+     pytestでは検証できない、「実際の出力（Markdown・画像・生成
+     PDF）を人間が目視して確認する必要がある項目」（各セクション末尾
+     の「目視チェック実施状況」欄を参照）を確認するには、
+     translate_paper.py本実行が必要になる。出力先を省略すると
+     `output/manual_{PDF名}_{範囲記述子}_{実行日時}`
+     という名前で自動生成される（詳細はREADME.md参照）。
+
+     (1) venv\Scripts\python translate_paper.py input\sample0.pdf
+         sample0.pdfの数式描画・見出し判定・前付け処理・ページまたぎ
+         段落の結合・図表PNG切り出し・ヘッダーフッター除外・対訳版
+         レイアウトの目視確認対象を生成する。
+
+     (2) venv\Scripts\python translate_paper.py input\sample1.pdf
+         sample1.pdfの数式描画・表4件のキャプション/PNG切り出し・
+         参考文献セクションの翻訳除外の目視確認対象を生成する。
+
+     (3) venv\Scripts\python translate_paper.py input\sample2.pdf
+         sample2.pdfの表2件のキャプション・PNG切り出しの目視確認対象を
+         生成する。
+
+     (4) venv\Scripts\python translate_paper.py input\sample3.pdf
+         --start-label 55 --end-label 60
+         sample3.pdf物理ページ67〜72（＝印刷ページラベル55〜60）の
+         番号なし見出し8件の目視確認対象を生成する。--start-label/
+         --end-labelと--start/--endはこの範囲では等価なためどちらか
+         一方でよい。--chapterはこの範囲を含むより広い章全体を処理して
+         しまい、CLAUDE.mdの「sample3.pdfは最小限の範囲のみ処理する」
+         という運用規定に反するため使わない。
+
+     なお、前付けローマ数字の章スキップ判定・印刷ページラベルの読み取り
+     （test_resolve_physical_page_for_sample3）の目視確認は、本実行の
+     生成物ではなくinput\sample3.pdfそのもの（しおりパネル・実際の印刷
+     ページ）を直接開いて確認する項目であり、対応する本実行コマンドは
+     存在しない。
+
+     各コマンド実行後の目視確認では、生成された出力ファイル・入力
+     PDFに加え、コマンド実行時の標準出力（ターミナルログ）も確認
+     対象に含めること。postprocess（mainCode/stage6/stage6.py。
+     main()が工程(6)として直接呼ぶ）は
+     単体アルファベット変数の自動保護（protect_confirmed_single_letter_
+     leaks）や、関数呼び出し記法・比較演算子付きの断片の統合結果
+     （merge_function_call_math_spans・merge_comparison_math_spans）を
+     [数式チェック]/[情報]としてコンソールに出力するのみで、
+     出力ファイルには保存しないため（詳細は
+     doc/architecture/stage6.md「4. 構成要素リファレンス」参照）。
+
+
+前提: このファイルは `doc/architecture.md`（システム構造。§2 に7工程
+モデル）および各 `doc/architecture/<basename>.md` とセットで読む前提で
+書かれている。各セクションの説明末尾に記載した「テスト対象（関数）」は
+検証対象の関数名であり、その入力・出力・処理内容の詳細は
+doc/architecture/<basename>.md「4. 構成要素リファレンス」を参照する。
+
+全体構成: テストコードは `testCode/` フォルダ配下の10ファイル＋共有
+`conftest.py` に分かれている。以下、本ファイルの各セクション（共有
+モジュール・工程(1)〜(7)・統合テスト・全体テスト）が対応する実ファイルを
+示す。
+
+  test_shared.py         … 共有モジュール（mainCode/shared/shared.pyの
+                            うち、特定の工程の役割に紐づかないprotect/
+                            restore自身の入出力契約）
+  test_stage1.py         … 工程(1) ページ範囲の決定
+  test_stage2.py         … 工程(2) PDF解析（MinerU実行）
+  test_stage3.py         … 工程(3) 構造化・タグ処理
+  test_stage4.py         … 工程(4) 翻訳実行（DeepL API呼び出し。
+                            TestCallDeepl・TestBuildContextText・
+                            TestTranslateUnitsEntryを含む）
+  test_stage5.py         … 工程(5) 翻訳後処理（数式復元。TestApplyRestore・
+                            TestWriteRestoreSnapshotを含む）
+  test_stage6.py         … 工程(6) 数式保護（write_translated_pages・
+                            TestPostprocess・
+                            TestFragmentCandidateDetection・
+                            TestProtectConfirmedSingleLetterLeaks・
+                            TestMergeFunctionCallMathSpans・
+                            TestMergeComparisonMathSpansを含む）
+  test_stage7.py         … 工程(7) PDF生成
+  test_whole_pipeline.py … 全体テスト（工程(1)〜(7)を通しで検証）
+  test_integration.py    … 統合テスト（工程横断）
+
+数式復元（`mainCode/stage5/stage5.py`）・数式保護（`mainCode/stage6/
+stage6.py`）・DeepL APIの実通信（`mainCode/stage4/stage4.py`）は、
+それぞれ工程(5)・工程(6)・工程(4)専属のファイルであるため、その単体
+テストも他の工程と同じ規則でそのまま工程別ファイル（`test_stage5.py`・
+`test_stage6.py`・`test_stage4.py`）に収まっている（詳細はCLAUDE.md
+「テスト・実行運用規定」項目8参照）。
+各テストクラスをどのファイルに置くかは、そのクラスが検証している対象
+コードが実際にどの工程の役割を果たしているかで判定しており、ソース
+ファイルの置き場所とは独立している。
+実行手段は `pytest` のみで、DeepLの実課金呼び出しは
+`test_run_pipeline_end_to_end_with_real_deepl`（CLAUDE.mdが定める許可
+された4組み合わせ限定: sample0全体・sample1全体・sample3印刷ページ
+ラベル55〜60・sample3印刷ページラベル56＋vlm-engineバックエンド）
+以外は原則モック化されている。
+
+前提（サンプルPDFについて）: 多くのテストは`input/sample0.pdf`〜
+`sample3.pdf`という特定のサンプルPDFを前提に書かれている（どのテストが
+どのファイルを使うかは、各セクションの「該当関数」欄、および本ファイル
+末尾近くの「■ まとめ表」を参照）。これらのサンプルPDFは著作権の都合上、
+本リポジトリには含まれていない（README.mdの「テスト（pytest）の実行に
+ついて」参照）。対象PDFが存在しない場合の挙動はテストによって異なる。
+  - モジュールスコープのfixture（`processed`等）を使うテスト、および
+    個別に存在チェックを持つテストは`pytest.skip`で穏やかにスキップ
+    される。
+  - 存在チェックを持たず、`resolve_physical_page`/`resolve_chapter_
+    page_range`等を実PDF（sample2.pdf/sample3.pdf）に対して直接呼ぶ
+    テストは、PDFが無いとfitz等が送出する生の例外でエラー終了する
+    （スキップされない）。
+  - 文字列処理ユニットテスト、章指定パースの一部、入力PDFファイル
+    存在チェックはPDFを一切使わない、またはfitzで実行時に組み立てる
+    使い捨ての合成PDFのみを使うため、この制約を受けない。
+
+  実データ依存度（テスト全体に対する割合）: testCode/配下の全テストの
+  test_関数・全ケース（parametrize展開後）のうち、実際にダウンロード
+  した`sample0`〜`sample3.pdf`の中身（MinerUのOCR結果、または実際の
+  目次・印刷ページラベルの構成）に期待値が依存しているのは一部にとどまり、
+  残りはPDFを使わない純粋なロジックテストか、fitzでテスト実行時に組み
+  立てる合成PDF（目次・印刷ページラベルだけを持つ白紙PDF）によるアルゴ
+  リズム検証である。実データへの依存を完全にゼロにはしていない点に
+  注意（MinerU OCR結果、および各アルゴリズムにつき最低1件残している
+  実書籍PDFでの統合確認は、意図的に実データのまま残している）。
+
+  pytest以外に必要な確認作業（チェックリスト）: `pytest`が全件PASSしても
+  それだけでは「全テスト結果の確認」は完了しない。以下はpytestでは
+  自動化できず、実際にツールを本番実行（`translate_paper.py`または
+  `prepare_translation_input`〜`render_units_to_pdfs`の直接呼び出し）
+  した上でPDFビューア等を使った人間の目視が必要な項目（詳細は各項目
+  末尾に記載のセクションを参照）。
+    1. 数式(KaTeX)描画の目視確認: sample0.pdf・sample1.pdfともに実施済み
+       （詳細は下記「工程(7)」・「統合テスト」の各「目視チェック実施
+       状況」参照）。ただし`mainCode/stage7/stage7.py`・`mainCode/stage6/stage6.py`・
+       `mainCode/stage5/stage5.py`のいずれかを変更した場合は再確認が必要な、
+       恒常的な運用タスクである。
+  この1点以外に、pytestやテキストエディタでの目視（`page_XX_ja.md`と
+  原文PDFの突き合わせ等）でカバーしきれない確認作業は無い。
+
+
+■ 検証カテゴリについて（期待値の信頼性の指標）
+
+各テスト（性質が割れる場合はテスト単位）に「検証カテゴリ」を付記する。
+これは「このテストが本当にPASSし続けていれば安心してよいか、それとも
+別途人間の目でも確認すべきか」を示す指標であり、テストの重要度そのもの
+を表すものではない。5種類に分類する。このうち3つ（実データ・要人間
+検証／機械的チェック・要人間検証／要人間確認）は広い意味で「要人間
+検証」だが、その**理由が異なる**点に注意（正確性の問題か、十分性の
+問題か、そもそも自動テストが無いか）。
+
+  ◆仕様完結型（検証不要）
+    入力・期待値ともにテスト自身が定義した自作データ（またはPDFの
+    中身を一切見ない機械的な判定）であり、コード（正規表現・
+    アルゴリズム）を読めば期待値の正しさが自明に判定できる。外部の
+    PDF・OCR結果を信用する必要が無い。
+
+  ◆実データ・要人間検証（正確性のリスク）
+    期待値が、実在のサンプルPDFをMinerU（OCR・レイアウト解析）
+    または fitz（TOC/印刷ページラベルのメタデータ読み取り＋そこ
+    からの計算）に通した結果をそのままハードコードしたもの。
+    メタデータの読み取り自体（fitz経由）は正確だが、「そこから
+    導いた期待値が本当に正しいか（人間が実際にPDFを見て確認した
+    か）」はテストコードだけからは保証されない。特にMinerUのOCR結果
+    をそのまま期待値にしている場合、誤読があっても「誤りが正解として
+    固定化」されるリスクがある。将来ツールの挙動が変わった場合も、
+    テストは「壊れていないこと」ではなく「昔の挙動と一致すること」
+    しか検知できない。
+
+  ◆機械的チェック・要人間検証（十分性のリスク）
+    実データの内容そのものは信用していない（ファイルの存在・非空・
+    テスト自身が注入した既知の文字列の有無など、チェック自体は明確
+    で信頼できる）ものの、その**チェックの範囲が薄く**、たとえこの
+    テストがPASSし続けても「検証したいはずの機能が本当に正しく動いて
+    いる」ことまでは十分に保証できない、というリスクを持つ。例えば
+    「日本語が1文字でもあればPASS」という検証では、翻訳対象50文中
+    49文が未翻訳のまま残っていても検知できない。正確性（ハードコード
+    した値が間違っていないか）ではなく、十分性（そのチェックの粒度で
+    本当に十分か）を人間が判断する必要がある。
+
+  ◆要人間確認（対応する自動テストが無い）
+    上記3種類はいずれも「PASS/FAILを機械的に判定するtest_関数が
+    まず存在する」ことが前提の分類だが、これはその前提自体が無い
+    ケース。判定対象（例: PDFに描画された数式の見た目）を自動で
+    検証する仕組みがそもそも存在しないため、テストの実行結果からは
+    何の安心材料も得られず、人間が都度直接確認する以外に手段が無い。
+
+  ◆外部API依存・非決定的
+    本テストの正しさは、実行するたびに変わりうる外部サービス（DeepL）
+    の実際の応答に依存する。実行のたびに実際のDeepL課金が発生する点も
+    他のカテゴリとは異なる。
+
+
+======================================================================
+ 共有モジュール（mainCode/shared/shared.py）
+======================================================================
+
+  ファイル: testCode/test_shared.py
+
+  該当関数: test_protect_returns_text_unchanged_and_empty_spans_when_no_math_present,
+    test_protect_leaves_unpaired_dollar_sign_untouched,
+    test_protect_captures_display_math_as_single_span_not_split_into_inline,
+    test_protect_assigns_sequential_indices_to_multiple_spans,
+    test_restore_returns_text_unchanged_when_no_placeholder_present,
+    test_restore_replaces_every_occurrence_of_the_same_placeholder_index
+
+  何を調べているか:
+    - test_protect_returns_text_unchanged_and_empty_spans_when_no_math_present:
+      数式スパンを含まないテキストをprotectへ渡した場合、テキストが
+      変更されず、数式スパンのリストが空になるか。
+    - test_protect_leaves_unpaired_dollar_sign_untouched: 閉じられて
+      いない単独の$（ペアが無い）が数式スパンとしてマッチせず、その
+      まま残るか。
+    - test_protect_captures_display_math_as_single_span_not_split_into_inline:
+      $$...$$（ディスプレイ数式）が、$...$（インライン数式）2つに
+      分割されず、1つのスパンとして捕捉されるか。
+    - test_protect_assigns_sequential_indices_to_multiple_spans: 複数の
+      数式スパンに、出現順で0始まりの連番インデックスが割り当てられるか。
+    - test_restore_returns_text_unchanged_when_no_placeholder_present:
+      プレースホルダを含まないテキストをrestoreへ渡した場合、テキスト
+      が変更されないか。
+    - test_restore_replaces_every_occurrence_of_the_same_placeholder_index:
+      同一番号のプレースホルダがテキスト中に複数回出現した場合、出現
+      箇所全てが対応する数式スパンへ置換されるか（翻訳エンジンが言い
+      回し上プレースホルダを正当に複数回参照するケースを想定した仕様
+      の確認であり、不具合の再現ではない）。
+
+  検証カテゴリ: ◆仕様完結型（全件。自作の短い文字列のみを使い、実データ・
+    MinerU・DeepLのいずれにも依存しない）。
+
+  目視チェック実施状況: 対象外（自作データのみで、期待値はテストコード
+    中の定義から直接計算できる値のため）。
+
+  テスト対象（関数）:
+    - shared.protect
+    - shared.restore
+
+  備考: protect/restoreのうち、特定の工程の役割として既に検証されて
+    いる振る舞い（protect_units・normalizeの基本ケース・実データでの
+    ラウンドトリップ確認はtest_stage3.py、apply_restoreの基本ケース・
+    プレースホルダ番号が範囲外の場合のフォールバックはtest_stage5.py）
+    は、重複を避けるためここでは再テストしない（CLAUDE.md「テスト・
+    実行運用規定」項目8参照）。
+
+
+======================================================================
+ 工程(1): ページ範囲の決定
+======================================================================
+
+  ファイル: testCode/test_stage1.py
+
+  該当関数: test_parse_chapter_spec_valid（5ケース）,
+    test_parse_chapter_spec_invalid（4ケース）,
+    test_resolve_chapter_page_range_requires_toc,
+    test_resolve_chapter_page_range_computes_ranges_from_toc,
+    test_resolve_chapter_page_range_out_of_range,
+    test_resolve_chapter_page_range_without_page_labels_uses_all_top_level_entries,
+    test_resolve_chapter_page_range_skips_roman_numeral_front_matter,
+    test_resolve_physical_page_range_handles_label_gap,
+    test_resolve_physical_page_unknown_label_raises,
+    test_resolve_physical_page_without_page_labels_raises,
+    test_resolve_physical_page_for_sample3（7ケース）,
+    test_resolve_page_range_conflicting_start_and_start_label_raises,
+    test_resolve_page_range_prefers_start_over_chapter,
+    test_resolve_page_range_prefers_label_over_chapter,
+    test_resolve_page_range_falls_back_to_chapter_when_no_page_range_given,
+    test_resolve_page_range_returns_none_when_nothing_specified,
+    test_require_pdf_exists_raises_for_missing_file,
+    test_require_pdf_exists_passes_for_existing_file,
+    test_describe_page_range（6ケース）,
+    test_default_output_dir_builds_manual_naming_convention
+
+  何を調べているか:
+    - test_parse_chapter_spec_valid/invalid: "1,2"/"1-2"等の章指定
+      文字列が正しく章番号リストへ変換されるか、""/"0"/"abc"/"2-1"等の
+      不正な指定がChapterResolutionErrorになるか（PDFを使わない純粋な
+      パーステスト）。
+    - test_resolve_chapter_page_range_requires_toc: 目次を持たない
+      PDF（fitzで組み立てる合成PDF。目次を設定せずに作成）では
+      --chapter がエラーになるか。
+    - test_resolve_chapter_page_range_computes_ranges_from_toc: 目次を
+      持つ合成PDFで、章番号→物理ページ範囲の変換が目次の並びから正しく
+      計算されるか（最上位階層のみを章とする、下位階層は無視する、
+      最終章は文書末尾まで、単一章・複数章指定のいずれも）。
+    - test_resolve_chapter_page_range_out_of_range: 目次に存在しない
+      章番号（合成PDFは3章分のみ）を指定した場合にエラーになるか。
+    - test_resolve_chapter_page_range_without_page_labels_uses_all_top_level_entries:
+      印刷ページラベル情報を持たない合成PDF（set_page_labelsを呼ばず
+      作成）では、前付け判定を行わず目次の最上位階層すべてを章として
+      数えることの確認。
+    - test_resolve_chapter_page_range_skips_roman_numeral_front_matter:
+      書籍PDF（sample3.pdf）で、ローマ数字の前付け見出し（Preface等）
+      を章として数えず、算用数字ページが始まってから最初の目次項目を
+      第1章とみなせているか（合成PDFでは代替しにくい前付け判定の複雑さ
+      を持つため、意図的に実データのまま残している）。
+    - test_resolve_physical_page_range_handles_label_gap: 印刷ページ
+      番号にギャップ（欠番）がある合成PDFで、開始・終了ラベルから物理
+      ページ範囲へ正しく変換できるか。
+    - test_resolve_physical_page_unknown_label_raises: 印刷ページラベル
+      "1"のみを持つ合成PDFで、存在しないラベル（"zzz"）を指定した場合に
+      エラーになるか。
+    - test_resolve_physical_page_without_page_labels_raises: 印刷
+      ページラベル情報を持たない合成PDF（sample2.pdfのような学術論文
+      PDFの状態を再現）ではエラーになるか。
+    - test_resolve_physical_page_for_sample3: "cov"/"COV"/"Cover"
+      （大文字小文字・短縮形の同一視）、"i"、"xviii"、"55"、"60"と
+      いった印刷ページラベルが、sample3.pdfの正しい物理ページ番号へ
+      変換されるか（最もラベル種類を網羅しているため、意図的に実データ
+      のまま残している）。
+    - test_resolve_page_range_conflicting_start_and_start_label_raises:
+      --start（67）と --start-label（"55"）を同時指定した場合に、
+      どちらを優先すべきか一意に決まらないためエラーになるか。
+    - test_resolve_page_range_prefers_start_over_chapter /
+      _prefers_label_over_chapter: --start/--endまたは--start-label/
+      --end-labelが--chapterより優先して解決されるか。
+    - test_resolve_page_range_falls_back_to_chapter_when_no_page_range_given
+      / _returns_none_when_nothing_specified: ページ範囲指定が無い場合に
+      --chapterへフォールバックするか、いずれも無指定なら(None, None)を
+      返すか。
+    - test_require_pdf_exists_raises_for_missing_file /
+      _passes_for_existing_file: 存在しないPDFパスを指定した場合に、
+      fitz（PyMuPDF）が送出する生のFileNotFoundErrorではなく、他の入力
+      エラーと同じ「分かりやすい日本語メッセージ＋SystemExit」で終了
+      するか、実在するパスでは何も送出しないか。
+    - test_describe_page_range: --chapter/--start・--end/--start-label・
+      --end-labelの指定内容から、cache/・output/のフォルダ命名に使う
+      範囲記述子（"full"/"chapter1-2"/"p66-71"/"label55-60"）が、
+      resolve_page_rangeと同じ優先順位で組み立てられるか。
+    - test_default_output_dir_builds_manual_naming_convention:
+      output_dir省略時の自動生成パスが、人間による手動実行（「本実行」）
+      と同じ命名規則（output/manual_{PDF名}_{範囲記述子}_{実行日時}）に
+      なるか。
+
+  検証カテゴリ: ◆仕様完結型（parse_chapter_spec系・合成PDFを使う
+    resolve_chapter_page_range系/resolve_physical_page系・
+    resolve_page_range系・require_pdf_exists系・describe_page_range・
+    default_output_dir）／◆実データ・要人間検証
+    （test_resolve_chapter_page_range_skips_roman_numeral_front_matter、
+    test_resolve_physical_page_for_sample3のみ）。後者2件の期待値は、
+    fitzが読み取るTOC・印刷ページラベルという客観的な生メタデータ自体は
+    正確だが、そこから計算・参照した値を人間が期待値に固定したもので
+    あり、「利用者が直感的に正しいと思う結果」と一致しているかは独立
+    検証されていない。
+
+  目視チェック実施状況: 実施済み。対象は
+    test_resolve_chapter_page_range_skips_roman_numeral_front_matterと
+    test_resolve_physical_page_for_sample3のみ（他は合成PDFまたは自作
+    データのため対象外。期待値はテストコード中の定義から直接計算できる
+    値であり、目視確認を要する「実データの読み取り結果」ではない）。
+    sample3.pdfのPreface・Introduction・Contents（印刷ページラベル＝
+    ローマ数字）が前付けとして正しく除外され、Part I・II・IIIが章境界
+    として正しいこと、また物理ページ1・2・16・67・72・49・53の印刷
+    ページラベル（"Cover"/"i"/"xviii"/"55"/"60"/"36"/"41"）が期待通り
+    であることを、原本PDFのしおりパネル、およびfitzの物理ページ直接
+    書き出し（ラベル解決ロジックを経由しない）で確認し、全件一致した。
+
+  テスト対象（関数）:
+    - stage1.parse_chapter_spec（工程(1)）
+    - stage1.resolve_chapter_page_range（工程(1)）
+    - stage1.resolve_physical_page（工程(1)）
+    - stage1.resolve_physical_page_range（工程(1)）
+    - stage1.resolve_page_range（工程(1)。--chapter/--start/
+      --end/--start-label/--end-label の各引数からページ範囲を決定
+      する優先順位ロジックそのものを検証する）
+    - whole_pipeline._require_pdf_exists（whole_pipeline.py）
+    - whole_pipeline.describe_page_range（whole_pipeline.py）
+    - whole_pipeline.default_output_dir（whole_pipeline.py）
+
+
+======================================================================
+ 工程(2): PDF解析
+======================================================================
+
+  ファイル: testCode/test_stage2.py
+
+  該当関数: test_run_mineru_invokes_subprocess_and_parses_content_list,
+    test_run_mineru_uses_cache_on_second_call,
+    test_run_mineru_cache_invalidated_by_different_page_range,
+    test_run_mineru_raises_when_subprocess_fails,
+    test_run_mineru_raises_when_output_file_missing,
+    test_run_mineru_reruns_after_version_change,
+    test_run_mineru_rejects_unsupported_backend,
+    test_run_mineru_pipeline_backend_passes_method_auto,
+    test_run_mineru_vlm_engine_backend_omits_method_and_finds_backend_specific_subfolder,
+    test_load_returns_none_when_no_cache, test_save_then_load_roundtrip,
+    test_cache_isolated_by_page_range, test_cache_isolated_by_backend,
+    test_cache_dir_name_differs_by_backend,
+    test_load_returns_none_when_pdf_content_changes,
+    test_load_returns_none_when_mineru_version_changes,
+    test_load_returns_none_on_corrupted_content_list_json,
+    test_save_is_noop_when_pdf_hash_fails, test_cache_disabled_via_env_var,
+    test_get_mineru_version_raises_on_missing_package,
+    test_mineru_cache_has_real_content_for_sample_pdfs（sample0〜3の
+    4ケース）
+
+  何を調べているか:
+    subprocess.runを差し替えて実MinerUを一切起動せずに、run_mineruの
+    呼び出し・パース・キャッシュ連携ロジックを検証する（7工程中、
+    唯一の重い外部処理のため、このアプローチでのみ無課金・高速に
+    検証できる）。
+    - test_run_mineru_invokes_subprocess_and_parses_content_list:
+      MinerUをsubprocessとして正しく呼び出し、content_list.jsonと
+      画像を解析できるか。
+    - test_run_mineru_uses_cache_on_second_call: 同一PDF・同一ページ
+      範囲での2回目の呼び出しがキャッシュヒットし、subprocessを再起動
+      しないか。
+    - test_run_mineru_cache_invalidated_by_different_page_range:
+      ページ範囲が異なればキャッシュがヒットせず、正しく再実行される
+      か。
+    - test_run_mineru_raises_when_subprocess_fails /
+      _raises_when_output_file_missing: MinerUの異常終了、または期待
+      した出力ファイルが無い場合にMinerURunErrorになるか。
+    - test_run_mineru_reruns_after_version_change: MinerUのバージョン
+      が変わった場合、キャッシュを無視して再実行されるか。
+    - test_run_mineru_rejects_unsupported_backend: サポート対象外の
+      backend（SUPPORTED_MINERU_BACKENDSに無い値）を指定した場合に
+      ValueErrorになるか。
+    - test_run_mineru_pipeline_backend_passes_method_auto: backend省略時
+      （既定の"pipeline"）に、MinerU CLIへ渡すコマンドへ`--method auto`
+      が付与されるか。
+    - test_run_mineru_vlm_engine_backend_omits_method_and_finds_backend_
+      specific_subfolder: backendに"vlm-engine"を指定した場合、
+      `--method`が付与されないこと、およびcontent_list.jsonの検索が
+      "auto"決め打ちではなくbackend固有のサブフォルダ名でも解決できる
+      ことを確認する。
+    - test_load_returns_none_when_no_cache /
+      test_save_then_load_roundtrip: キャッシュが無い場合はNoneを返す
+      か、保存後は正しく読み込めるか。
+    - test_cache_isolated_by_page_range /
+      _load_returns_none_when_pdf_content_changes /
+      _load_returns_none_when_mineru_version_changes /
+      test_cache_isolated_by_backend: キャッシュキー（PDFのSHA-256
+      ハッシュ・ページ範囲・MinerUバージョン・backend）のいずれかが
+      変わればキャッシュが無効化されるか。
+    - test_cache_dir_name_differs_by_backend: backendごとにキャッシュの
+      サブフォルダ名（既定の"pipeline"は"mineru_cache/"、それ以外は
+      "mineru_cache_<backend>/"）が分かれるか。
+    - test_load_returns_none_on_corrupted_content_list_json /
+      _save_is_noop_when_pdf_hash_fails: キャッシュが破損している場合、
+      または保存時にPDFハッシュの計算に失敗した場合、常に通常実行への
+      フォールバックとして安全側に倒れるか。
+    - test_cache_disabled_via_env_var: 環境変数MINERU_CACHE_DISABLE=1で
+      キャッシュを無効化できるか。
+    - test_get_mineru_version_raises_on_missing_package: MinerUパッケージ
+      が未インストールの場合にMinerUVersionErrorになるか。
+    - test_mineru_cache_has_real_content_for_sample_pdfs: 実サンプル
+      PDF（sample0〜3）について、cache/配下に実MinerU実行結果が既に
+      永続化されているかを確認する実データ・スモークテスト（`-k`で
+      対象サンプルを選べる。キャッシュが無い場合はskipする）。
+
+  検証カテゴリ: ◆仕様完結型（subprocessをモック化するテスト群）／
+    ◆実データ・要人間検証（test_mineru_cache_has_real_content_for_sample_pdfs
+    のみ。キャッシュの中身が実際に空でないことを確認するのみで、内容
+    そのものの正しさは本ファイル内の構造解析系テストが担当する）
+
+  以下、同じtestCode/test_stage2.pyに含まれる構造解析・成果物結合
+  （analyze_structure・build_document、工程(2)後半）のテストを続ける。
+
+  該当関数: test_analyze_structure_assigns_front_matter_and_numbered_heading_labels,
+    test_analyze_structure_assigns_synthetic_ids_to_unnumbered_headings,
+    test_analyze_structure_auto_protects_bare_greek_and_letter_equals_expressions,
+    test_analyze_structure_separates_figure_and_caption_with_number,
+    test_analyze_structure_falls_back_to_unknown_element_on_error,
+    test_build_document_writes_markdown_and_saves_figure_image,
+    test_split_sentences_handles_abbreviations（4ケース）,
+    test_heading_regex_and_slugify（3ケース）,
+    test_parse_caption_label（4ケース）,
+    test_wrap_bare_greek_letters（5ケース）,
+    test_wrap_bare_letter_equals_expressions（5ケース）,
+    test_analyze_structure_on_real_cached_mineru_content（sample0〜3の
+    4ケース）, test_extract_and_number_sentences,
+    test_front_matter_labels_are_not_counted_as_sentences,
+    test_chapter_headings_get_dedicated_labels,
+    test_cross_page_paragraph_is_kept_on_starting_page,
+    test_figure_caption_is_separated_from_body_text,
+    test_images_are_extracted_as_png,
+    test_figure_reference_is_placed_in_page2_markdown,
+    test_all_three_equations_are_detected_with_latex,
+    test_inline_math_is_wrapped_in_dollar_signs,
+    test_math_protection_round_trips_all_real_inline_math,
+    test_header_and_footer_noise_excluded,
+    test_sentence_ids_are_sequential_per_page,
+    test_table_captions_sample1, test_table_captions_sample2,
+    test_table_images_are_extracted_as_png_sample1,
+    test_table_images_are_extracted_as_png_sample2,
+    test_unnumbered_headings_in_real_book_pdf,
+    test_analyze_structure_equation_without_img_path_keeps_latex,
+    test_analyze_structure_equation_with_empty_text_and_no_img_path_is_dropped,
+    test_build_document_equation_without_image_omits_image_line_but_keeps_latex,
+    test_analyze_structure_drops_header_footer_page_number_as_noise,
+    test_analyze_structure_treats_page_footnote_as_translatable_text,
+    test_build_document_preserves_multiline_text_and_reparses_without_loss,
+    test_build_document_numbers_duplicate_unknown_elements_on_same_page,
+    test_no_unexpected_unknown_elements_in_sample0,
+    test_no_unexpected_unknown_elements_in_sample1,
+    test_no_unexpected_unknown_elements_in_sample2,
+    test_no_unexpected_unknown_elements_in_sample3
+
+  何を調べているか:
+    MinerUの生出力（content_list）をタグ付きMarkdownへ変換する処理
+    （工程(2)後半）を検証する。
+    - test_analyze_structure_assigns_front_matter_and_numbered_heading_labels:
+      自作itemsで、タイトル・著者・所属が前付けラベルに、番号付き
+      見出しが章番号ベースのラベルになるか。
+    - test_analyze_structure_assigns_synthetic_ids_to_unnumbered_headings:
+      章番号の付かない見出しに、文書全体で一意な合成章ID（"u1","u2",
+      ...）が振られ、直後の本文文IDにも反映されるか。
+    - test_analyze_structure_auto_protects_bare_greek_and_letter_equals_expressions:
+      MinerUが数式として検出しなかった裸のギリシャ文字・"文字=値"形式
+      の断片が、構造解析段階で自動的に$...$保護されるか。
+    - test_analyze_structure_separates_figure_and_caption_with_number:
+      図とキャプションが別要素に分離され、番号が正しく付与されるか。
+    - test_analyze_structure_falls_back_to_unknown_element_on_error:
+      要素の解析中に例外が発生してもドキュメント全体を止めず、
+      UnknownElementへフォールバックするか。
+    - test_build_document_writes_markdown_and_saves_figure_image:
+      構造化ドキュメントから、タグ付きMarkdownと図画像が正しく書き
+      出されるか。
+    - test_split_sentences_handles_abbreviations: "Fig." "Sec." "e.g."
+      等の略語直後で誤って文分割しないか。
+    - test_heading_regex_and_slugify: "1. INTRODUCTION" のような見出し
+      文字列から章番号・章名を正しく判定し、スラッグに変換できるか。
+    - test_parse_caption_label: "Fig. 1:..." "Table 2:..." 等のキャプ
+      ション文から種別（figure/table）と番号を正しく抽出できるか。
+    - test_wrap_bare_greek_letters / test_wrap_bare_letter_equals_expressions:
+      地の文に単独で出現するギリシャ文字・"1文字の変数 = 値"形式の
+      断片が、$...$に包まれるか（既保護スパンの二重ラップ防止・非該当
+      パターンでの無変化を含む）。
+    - test_analyze_structure_on_real_cached_mineru_content: 実サンプル
+      PDF（sample0〜3）のMinerUキャッシュ済みcontent_listをanalyze_
+      structureに通し、DeepLを一切経由せずに実データの構造化結果が
+      最低限得られることを確認する実データ・スモークテスト。
+    - test_extract_and_number_sentences 〜
+      test_sentence_ids_are_sequential_per_page（12テスト）:
+      sample0.pdfを実際に処理し、ページ数・ファイル名・ID体系、前付け・
+      見出しラベルの分離、ページまたぎ段落の結合、図キャプションの分離、
+      PNG切り出し、画像参照タグの位置、数式3つの検出とLaTeXタグ、
+      インライン数式の$...$化、数式スパン全数（27個）のラウンドトリップ、
+      ヘッダー/フッター除外、文ID連番という、パイプライン基本機能を
+      一通り検証する。
+    - test_table_captions_sample1/sample2, test_table_images_are_extracted_as_png_sample1/sample2:
+      表を含むPDF（sample1.pdf: 4表、sample2.pdf: 2表）で、表キャプション
+      が図（FIG）とは別のTABLEラベルで文単位に連番され、表領域がPNG
+      画像として切り出されるか。
+    - test_unnumbered_headings_in_real_book_pdf: 番号なし見出しへの
+      合成章ID付与を、実際のsample3.pdf（物理ページ67〜72）を処理して
+      裏取りする。
+    - test_analyze_structure_equation_without_img_path_keeps_latex:
+      img_pathを持たないitem（切り出し画像を返さないバックエンドの
+      出力を模したもの）でも、latexが空でなければEquationElementが
+      生成され、image_pathがNoneのままlatexは保持されるか。
+    - test_analyze_structure_equation_with_empty_text_and_no_img_path_
+      is_dropped: latex自体が空、かつimg_pathも無いitemは、描画できる
+      情報が無いためEquationElementとして追加されず破棄されるか。
+    - test_build_document_equation_without_image_omits_image_line_but_
+      keeps_latex: image_path=NoneのEquationElementをbuild_documentに
+      通した場合、タグ付きMarkdown中で画像行（`![tag](path) [tag]`）が
+      省略され、`[tag-LATEX] $$...$$`行のみが出力されるか。
+    - test_analyze_structure_drops_header_footer_page_number_as_noise:
+      MinerUの"header"/"footer"/"page_number"種別が、UnknownElement化
+      して本文段落に紛れ込むことなく除外されるか。
+    - test_analyze_structure_treats_page_footnote_as_translatable_text:
+      MinerUの"page_footnote"種別が、ノイズとして捨てられず本文と同じ
+      扱い（文分割・翻訳対象のTextBlockElement）になるか。
+    - test_build_document_preserves_multiline_text_and_reparses_without_
+      loss: 改行を含むUnknownElement.text（MinerUのcode_body等由来）が、
+      build_documentでは複数の物理行のまま書き出され、parse_page_file
+      で読み直した際には欠落なく1つのunitへ再結合されるか。
+    - test_build_document_numbers_duplicate_unknown_elements_on_same_
+      page: 同一ページ内に同じraw_typeのUnknownElementが複数出現した
+      場合、タグがページ内連番（例:"code-1"/"code-2"）で区別され、
+      重複しないか。
+    - test_no_unexpected_unknown_elements_in_sample0〜_sample3: 実サン
+      プルPDF（sample0〜3）を実際に処理した際、_handle_unknown_itemへ
+      フォールバックするraw_typeの集合を、目視確認済みの許可リスト
+      （KNOWN_UNKNOWN_ELEMENT_RAW_TYPES系）と突き合わせる無課金の回帰
+      テスト。DeepLを呼ばない（MinerUキャッシュのみに依存する既存の
+      processed系fixtureを使う）。運用は数式漏れ
+      の許可リスト（KNOWN_FALSE_POSITIVE_FRAGMENTS系）と同じで、機械的
+      な追加を禁止し目視確認を必須とする。
+
+  検証カテゴリ: ◆仕様完結型（自作データ・合成データを使うテスト群）／
+    ◆実データ・要人間検証（sample0〜3の実データを使うテスト群。期待値
+    はMinerUが実際にOCR・レイアウト解析した結果をそのままハードコード
+    したものであり、MinerUが誤読していないかを独立に確認した記録は
+    無い）
+
+  既知の仕様（"ABSTRACT"見出しの扱い）:
+    "ABSTRACT"はHEADING_REの「番号＋ピリオド＋見出し文」形式に一致
+    しないため見出し（HeadingElement）にはならず、本文の文の1つ
+    （[P1-S1-abstract-S1] ABSTRACT）として扱われる。ただし後続の文が
+    暗黙的にsection="abstract"としてグルーピングされるため、章の区切り
+    としての機能は結果的に果たしている、意図的な仕様（バグではない）。
+    詳細は doc/architecture/stage2.md「4. 構成要素リファレンス」の
+    _handle_text_item 参照。
+
+  既知の仕様（段落がページをまたぐ場合の割り当て）:
+    段落が原本PDFの物理ページをまたいでいる場合、MinerUがその段落を
+    1つのまとまり（text item）として認識していると、段落全体が開始
+    側ページのMarkdownに出力される。本ツールはMinerUのページ判定を
+    そのまま尊重しており、item単位の再分割は行わない、意図的な仕様
+    （バグではない）。詳細は doc/architecture/stage2.md「4. 構成要素
+    リファレンス」の _build_pages 参照。
+
+  既知の仕様（画像を持たない数式要素の扱い）: MinerUバックエンドに
+    `vlm-engine`を指定した場合、数式はLaTeXテキストのみで返され切り出し
+    画像（img_path）を持たないことがある。この場合EquationElement.
+    image_pathはNoneのままになり、build_documentが出力するタグ付き
+    Markdownでは画像行が省略され、`[tag-LATEX] $$...$$`行のみが出力
+    される。最終PDFの数式描画は常にlatex側（KaTeX）で行われるため、
+    画像行が無くても表示上の欠落は起きない、意図的な仕様（バグでは
+    ない）。詳細は doc/architecture/stage2.md「4. 構成要素リファレンス」の
+    _handle_equation_item・_render_page_markdown 参照。
+
+  既知の制限（表の下の脚注の扱い）: 表の下に印字される脚注は、MinerUの
+    `table_footnote`フィールドが空のまま`table_caption`側にキャプション
+    文と混在して返ってくることがある。ラベル（Fig./Table番号）を持たない
+    要素は、直前のラベル付きキャプションへの継続文として結合する仕様に
+    なっている（`mainCode/stage2/stage2.py`の
+    `_handle_image_or_table_item`）。現在の仕様では内容の欠落は無いが、
+    「キャプション」と「脚注」という意味的な区別は付かない。詳細は
+    doc/architecture/stage2.md「4. 構成要素リファレンス」の
+    _handle_image_or_table_item 参照。
+
+  既知の制限（"Table N."形式のキャプション分割）:
+    split_sentences（mainCode/stage2/stage2.py）の略語リストに"table."/"tab."が
+    含まれないことと、分割位置が"Table"の直後ではなく数字"1."の直後に
+    なることが重なるため、"Table 1. Correspondences..."のようにピリオド
+    区切りのキャプションは"Table N."とその後の説明文が別々の2文
+    （CAPTION-S1/S2）に分割される。内容は失われず生成PDF上も問題が
+    無い。コロン区切りのキャプション（sample2.pdfの表1・表2等）では
+    この分割は発生しない。詳細は doc/architecture/stage2.md「4. 構成要素
+    リファレンス」の split_sentences 参照。
+
+  インライン数式の網羅性について:
+    人間が原本PDF上で「これは本当に数式か」を判断する手がかりは、
+    変数のイタリック体・ベクトル/行列の太字（\mathbf等）が地の文と
+    異なるフォントで組まれていることである。ただし、元のLaTeXソースが
+    本当に数式モードだったかをPDFの見た目だけから完全に証明することは
+    できない（単純な1文字の変数などは判断材料が乏しい）点は限界として
+    認識しておく必要がある。詳細は doc/architecture/stage2.md「4. 構成
+    要素リファレンス」の _handle_text_item 参照。
+
+    「原本PDFが本当に数式モードだったか」の証明はできないが、「翻訳後
+    もその数式が壊れずに残るか」は別の角度から検証できる。この「保護
+    されて生き残るか」という性質を利用し、page_02_en.mdに実際に含まれる
+    数式スパン全数（27個）を対象にprotect/restoreのラウンドトリップを
+    検証する自動テスト（test_math_protection_round_trips_all_real_
+    inline_math）がある。
+
+    さらに、そもそも$...$で保護すらされていない、数式検出漏れの断片
+    （例: "decode a latent z"の"z"、"from t = 1 to t = 0"の"t = 1"/
+    "t = 0"、"K discrete steps"の"K"）も実際に存在する。これらへの
+    対応として、翻訳後のja_textに半角のまま生き残った断片を統計的に
+    洗い出すstage6.find_untranslated_fragment_candidatesがある。その
+    候補のうち半角アルファベット1文字だけをstage6.protect_confirmed_
+    single_letter_leaksが自動的に$...$保護し、残りは無課金の回帰テスト
+    （test_untranslated_fragment_candidates_against_cached_deepl_output）
+    と人間の目視確認に委ねる。パターンを列挙せず
+    「全角の訳文中の半角の連続」で拾うため、"t = 1"・"O(n)"・型番など
+    列挙しきれない数式的表記を一括で拾える代わりに固有名詞の誤検知も
+    含む（人間確認前提）。
+
+    翻訳を待たず構造解析段階で確実に保護できるパターンについては、
+    実際に保護まで行う3つの自動保護関数がある。
+      - stage2.wrap_bare_greek_letters（構造解析段階。本文中の
+        孤立したギリシャ文字を自動的にTeXコマンド形式（例:
+        "γ"→"$\gamma$"）に変換して$...$で囲む。地の文にギリシャ文字が
+        実在の英単語として使われることは無いため誤爆リスクが低い。
+        生の文字のままでもKaTeXは等価に描画するが、MinerU由来の他の
+        数式スパンとの表記の一貫性のため、明示的なTeXコマンド形式への
+        変換を採用している）
+      - stage2.wrap_bare_letter_equals_expressions（構造解析
+        段階。"1文字の変数 = 値"形式の断片（例: "t = 1"）を、正規表現
+        `\b[a-zA-Z]\s*=\s*[a-zA-Z0-9]+\b` で検出し$...$で囲む。
+        "a = b"という形が実在の英文として自然に使われることは無いため、
+        単体アルファベットとは異なり翻訳を待たず構造解析段階で保護
+        できる。MinerUが検出しそこねた"t = 1"/"t = 0"（sample0.pdf
+        page_02, P2-S7）のような漏れは全てここで潰れる）
+      - stage6.protect_confirmed_single_letter_leaks（工程(6)
+        参照。翻訳直後・再翻訳無しで、翻訳後も半角のまま生き残った
+        単体アルファベットを保護する）
+    この3つの自動保護により、機械的に切り出せる「本物の数式漏れ」候補
+    （ギリシャ文字・"1文字 = 値"形式・翻訳後も半角のまま残る単体
+    アルファベット）は自動保護され、KNOWN_LEAKED_MATH_FRAGMENTSは
+    空集合になっている（自動保護されているため、find_untranslated_
+    fragment_candidatesの検出対象にも入らない）。
+
+  目視チェック実施状況: 実施済み（人間が確認）。見出し判定・前付け・
+    ページをまたぐ段落の結合・図と数式のPNG切り出し精度・ヘッダー/
+    フッターのノイズ除外・インライン数式の判定・表キャプション/PNG
+    切り出し（6表、脚注の欠落無しを含む）・番号なし見出し8件（sample3.pdf）
+    を、原本PDF・出力Markdown・PNG画像の突き合わせで確認し、全件一致・
+    問題無しであった。
+
+  テスト対象（関数）:
+    - stage2.run_mineru（工程(2)）
+    - stage2.load_cached_items / save_cache / _cache_dir /
+      _run_id / _compute_pdf_hash（工程(2)）
+    - stage2.get_mineru_version（工程(2)）
+    - stage2.process_pdf（工程(2)）
+    - stage2.analyze_structure（工程(2)）
+    - stage2.split_sentences / restore_merged_hyphens /
+      parse_caption_label / slugify_section_name / HEADING_RE /
+      wrap_bare_greek_letters / wrap_bare_letter_equals_expressions（工程(2)）
+    - stage2.build_document（工程(2)）
+
+
+======================================================================
+ 工程(3): 構造化・タグ処理
+======================================================================
+
+  ファイル: testCode/test_stage3.py
+
+  該当関数: test_parse_page_file_classifies_tag_kinds_and_translatability,
+    test_parse_output_dir_combines_pages_in_page_number_order,
+    test_exclude_references_section_marks_units_non_translatable,
+    test_build_document_context_uses_title_and_abstract_sentences
+
+  何を調べているか:
+    タグ付きMarkdownを読み込んでDocUnit・文脈へ組み立て直す処理
+    （(4)の前処理）を検証する。MinerU・DeepLどちらも呼ばない、自作の
+    タグ付きMarkdown・自作DocUnitのみを使った検証。
+    - test_parse_page_file_classifies_tag_kinds_and_translatability:
+      タグ付きMarkdownの各行が、正しい種別（title/heading/
+      body_sentence等）・翻訳対象可否に分類されるか。
+    - test_parse_output_dir_combines_pages_in_page_number_order:
+      複数ページのMarkdownが、ページ番号順に結合されるか。
+    - test_exclude_references_section_marks_units_non_translatable:
+      参考文献セクションのunitが翻訳対象外になるか。
+    - test_build_document_context_uses_title_and_abstract_sentences:
+      DeepLに渡す文書全体の文脈が、タイトル・abstractから正しく組み
+      立てられるか。
+
+  検証カテゴリ: ◆仕様完結型（自作データのみを使うテスト群）
+
+  目視チェック実施状況: 該当項目なし（自作データのみで検証でき、実PDFの
+    目視確認を要する項目を含まないため）。
+
+  テスト対象（関数）:
+    - stage3.parse_page_file / parse_output_dir /
+      exclude_references_section / build_document_context（工程(3)）
+
+
+======================================================================
+ 工程(4): 翻訳実行（DeepL API呼び出し）
+======================================================================
+
+  ファイル: testCode/test_stage4.py（mainCode/stage4/stage4.py単体の
+    テスト。test_call_deepl_*（TestCallDeeplクラス）・
+    test_build_context_text_*（TestBuildContextTextクラス）・
+    test_translate_units_*（TestTranslateUnitsEntryクラス）
+    を含む、工程(4)の全テストがこの1ファイルに収録されている）。
+
+  該当関数: test_call_deepl_raises_when_api_key_missing,
+    test_call_deepl_protects_math_and_builds_context_history,
+    test_call_deepl_wraps_deepl_exception_as_backend_error,
+    test_build_context_text_only_keeps_last_three_history_entries,
+    test_build_context_text_returns_none_when_nothing_to_join,
+    test_translate_units_reads_api_key_from_environ_and_delegates_to_deepl,
+    test_translate_units_passes_none_api_key_when_environ_unset
+
+  何を調べているか:
+    call_deeplはdeepl.Translatorをmonkeypatchで差し替え、実際のDeepL
+    APIを一切呼ばずに検証する。
+    - test_call_deepl_raises_when_api_key_missing: APIキー未設定の場合
+      にTranslationBackendErrorになるか。
+    - test_call_deepl_protects_math_and_builds_context_history: 数式
+      スパンがプレースホルダへ退避された状態でDeepLへ送られるか、
+      文脈（ドキュメント全体の要約＋直近履歴）が正しく構築されるか、
+      非翻訳対象unitがDeepLに送られないか。
+    - test_call_deepl_wraps_deepl_exception_as_backend_error: DeepL側の
+      例外がTranslationBackendErrorとしてラップされるか。
+    - test_build_context_text_only_keeps_last_three_history_entries:
+      _CONTEXT_HISTORY_SIZE（3）を超える履歴が渡された場合、直近3件
+      だけに切り詰められるか（call_deepl経由の既存テストは履歴を
+      最大2件しか作らず、切り詰めロジック自体は踏まれていなかった）。
+    - test_build_context_text_returns_none_when_nothing_to_join:
+      document_context・historyのどちらも空の場合にNoneを返すか
+      （DeepLのcontext引数へそのまま渡せることの前提）。
+    - test_translate_units_reads_api_key_from_environ_and_delegates_to_deepl:
+      DEEPL_API_KEY環境変数の値を読んでcall_deeplへ渡すか。開始・完了
+      ログが出るか。
+    - test_translate_units_passes_none_api_key_when_environ_unset:
+      DEEPL_API_KEY未設定時はNoneのままcall_deeplへ渡すか（APIキー
+      未設定エラーの判定はcall_deepl自身の責務）。
+
+  検証カテゴリ: ◆仕様完結型（call_deepl・_build_context_textのモック
+    テスト群、translate_units入口の環境変数からのAPIキー取得を確認する
+    テスト）
+
+  テスト対象（関数）:
+    - stage4.call_deepl（工程(4)）
+    - stage4._build_context_text（工程(4)）
+    - stage4.translate_units（工程(4)）
+
+
+======================================================================
+ 工程(5): 翻訳後処理（数式復元）
+======================================================================
+
+  ファイル: testCode/test_stage5.py（mainCode/stage5/stage5.py単体の
+    テスト。apply_restore系のみ。数式プレースホルダの復元
+    （apply_restore）だけが工程(5)の責務で、未保護の数式らしき断片の
+    自動保護・翻訳済みMarkdownの書き出しは工程(6)「数式保護」
+    （test_stage6.py）が担う）。
+
+  該当関数: test_apply_restore_writes_ja_text_from_raw_results_with_math_restored,
+    test_apply_restore_matches_cached_deepl_output（sample0〜3の
+    4ケース）,
+    test_write_restore_snapshot_records_pre_protection_state
+
+  何を調べているか:
+    apply_restoreはDeepLへの再通信を伴わない決定的な処理のため、自作の
+    DocUnit・RawTranslationResultで完全にオフライン検証できる。
+    - test_apply_restore_writes_ja_text_from_raw_results_with_math_restored:
+      DeepLの生応答（プレースホルダ付き）から、数式スパンが復元された
+      ja_textが書き込まれるか。非翻訳対象unitは書き換えないか。
+    - test_apply_restore_matches_cached_deepl_output: apply_restoreを、
+      cache/配下に凍結された実際のDeepL実行結果（04_deepl_output/
+      raw_deepl_results.jsonと05_restored/units_raw.json、独立した
+      正解データ）と突き合わせてオフラインで検証する（DeepLを一切
+      呼ばない）。同じ関数の出力を自分自身の正解データにしないことで、
+      apply_restore自体のリグレッションを検知できる。無課金のため
+      テスト名に"real_deepl"は含めていない。
+    - test_write_restore_snapshot_records_pre_protection_state:
+      apply_restore→whole_pipeline._write_restore_snapshotという、
+      main()が工程(5)の末尾で実際に呼ぶ順序をそのまま呼び、
+      snapshot_dir/05_restored/の内容が、apply_restore直後・工程(6)の
+      保護処理適用前の状態（未保護のまま残る単体アルファベット等が
+      裸のままのDocUnitスナップショット）になっているかを確認する。
+      test_apply_restore_matches_cached_deepl_outputが、この
+      05_restored/units_raw.jsonを「apply_restore直後の独立した正解
+      データ」として前提にしているため、将来_write_restore_snapshotの
+      呼び出しタイミングを誤って崩してしまった場合に検知できるように
+      する安全網。_write_restore_snapshot自体はwhole_pipeline.py側の
+      関数だが、検証している役割が工程(5)のスコープに収まるため、
+      CLAUDE.md「テスト・実行運用規定」項目8の方針（ソースの置き場所
+      ではなく役割で分類する）に従いこのファイルに置かれている。
+
+  検証カテゴリ: ◆仕様完結型（自作データを使うテスト群）／
+    ◆実データ・要人間検証（test_apply_restore_matches_cached_deepl_output。
+    対応するキャッシュが無い限りskipされる）
+
+  テスト対象（関数）:
+    - stage5.apply_restore（工程(5)）
+    - whole_pipeline._write_restore_snapshot（whole_pipeline.py）
+
+
+======================================================================
+ 工程(6): 数式保護
+======================================================================
+
+  ファイル: testCode/test_stage6.py（mainCode/stage6/stage6.py単体の
+    テスト。find_untranslated_fragment_candidates系・
+    protect_confirmed_single_letter_leaks系・
+    merge_function_call_math_spans系・merge_comparison_math_spans系に
+    加え、test_write_translated_pages_preserves_tag_format
+    （stage6.write_translated_pages、工程(6)の「翻訳済み
+    Markdownの書き出し」の役割を担う）、および工程(6)全体を代表する
+    統括関数postprocessを直接検証する
+    test_postprocess_protects_leaked_letter_and_writes_pagesも同じ
+    ファイルに収録されている）。数式プレースホルダの復元
+    （apply_restore）は工程(5)の責務のため対象外（test_stage5.py
+    参照）。test_untranslated_fragment_candidates_against_cached_deepl_output
+    （許可リスト突合）は工程横断の性質のため testCode/test_integration.py
+    に収録されている。
+
+  該当関数: test_postprocess_protects_leaked_letter_and_writes_pages,
+    test_postprocess_runs_single_letter_protection_before_comparison_merge,
+    test_find_untranslated_fragment_candidates（8ケース）,
+    test_protect_confirmed_single_letter_leaks_wraps_matching_occurrences,
+    test_protect_confirmed_single_letter_leaks_does_not_touch_existing_math_spans,
+    test_protect_confirmed_single_letter_leaks_skips_multi_char_tokens,
+    test_protect_confirmed_single_letter_leaks_strips_unpaired_leading_paren,
+    test_protect_confirmed_single_letter_leaks_strips_unpaired_trailing_paren,
+    test_protect_confirmed_single_letter_leaks_does_not_touch_paired_paren_enumerators,
+    test_protect_confirmed_single_letter_leaks_skips_non_translatable_units,
+    test_merge_function_call_math_spans_merges_matching_occurrences,
+    test_merge_function_call_math_spans_merges_conditional_probability_pattern,
+    test_merge_function_call_math_spans_merges_prime_notation_pattern,
+    test_merge_function_call_math_spans_skips_when_no_protected_span,
+    test_merge_function_call_math_spans_skips_when_space_before_paren,
+    test_merge_function_call_math_spans_skips_underscore_joined_identifiers,
+    test_merge_function_call_math_spans_skips_non_translatable_units,
+    test_merge_function_call_math_spans_does_not_redetect_independently_on_en_text,
+    test_merge_function_call_math_spans_leaves_en_text_untouched_when_not_found_verbatim,
+    test_merge_comparison_math_spans_merges_matching_occurrences,
+    test_merge_comparison_math_spans_merges_various_operators,
+    test_merge_comparison_math_spans_merges_when_right_side_is_math_span,
+    test_merge_comparison_math_spans_skips_when_right_side_is_word,
+    test_merge_comparison_math_spans_skips_html_sup_tag,
+    test_merge_comparison_math_spans_skips_non_translatable_units,
+    test_write_translated_pages_preserves_tag_format,
+    test_untranslated_fragment_candidates_against_cached_deepl_output
+    （sample0/sample1/sample3_label56-56/sample3_label55-60の4ケース）
+
+  何を調べているか:
+    postprocess以下の後処理系関数は、いずれもDeepLへの再通信を伴わ
+    ない決定的な処理のため、自作のDocUnitで完全にオフライン検証できる。
+    - test_postprocess_protects_leaked_letter_and_writes_pages:
+      postprocess（工程(6)全体を代表する統括関数）に、apply_restore
+      適用済み（ja_text設定済み）のunitsを直接与え、未保護のまま残った
+      単体アルファベット変数（"z"）がprotect_confirmed_single_letter_
+      leaksにより$...$保護された上で、write_translated_pagesにより
+      page_XX_en.md/page_XX_ja.mdが実際に書き出され、その戻り値が
+      返ることを確認する（工程(6)全体を単一の入出力を持つ関数として
+      単体テストできることの確認）。数式の復元（apply_restore）は
+      工程(5)の責務のため、この関数の入力としてja_text復元済みの
+      unitsを直接与える（apply_restore自体の検証はtest_stage5.py
+      参照）。
+    - test_postprocess_runs_single_letter_protection_before_comparison_merge:
+      postprocessのステップ順序（1: 単体アルファベット保護 → 2-3: 断片
+      統合）が実際に意味を持つケース（右辺"K"が単体変数として保護されて
+      初めてmerge_comparison_math_spansが発火する）を、mutation testingを
+      経て回帰テストとして追加したもの。
+    - test_find_untranslated_fragment_candidates: 日本語訳文字列
+      （ja_text）に半角のまま残る未検出の数式らしき断片を検出できるか、
+      スペースを挟んだ表記が分断されず1つの断片としてまとまるか、
+      $...$保護済みスパンが候補にならないかを検証する。この関数は
+      protect_confirmed_single_letter_leaksの候補源であると同時に、
+      test_untranslated_fragment_candidates_against_cached_deepl_output
+      （許可リスト突合）の測定器も兼ねる。
+    - test_protect_confirmed_single_letter_leaks_wraps_matching_occurrences
+      / _skips_multi_char_tokens / _skips_non_translatable_units:
+      未保護の単体アルファベット（"z"）がen_text/ja_text双方の同じ
+      箇所で$...$に置き換わるか、"DiT"のような複数文字のトークンは
+      対象外のままか、翻訳対象外unitは無視されるかを検証する。
+    - test_protect_confirmed_single_letter_leaks_does_not_touch_existing_math_spans:
+      既に$...$で保護済みの数式スパンの内部にある同名の文字を、二重に
+      $で囲んで壊さないかを検証する。
+    - test_protect_confirmed_single_letter_leaks_strips_unpaired_leading_paren
+      / _strips_unpaired_trailing_paren: 地の文の丸括弧書きの中で、
+      対になる括弧が離れた位置にあるため候補抽出時に"(x"や"Z)"のように
+      片側の括弧だけが巻き込まれるケースでも、括弧を剥がした上で単体
+      アルファベットとして保護できるかを検証する。
+    - test_protect_confirmed_single_letter_leaks_does_not_touch_paired_paren_enumerators:
+      "(i)"のように開き・閉じ両方の括弧が候補内に揃っている場合は列挙
+      記号の可能性が高いため、単体アルファベットとして誤って$...$で
+      囲まないことを検証する。
+    - test_merge_function_call_math_spans_merges_matching_occurrences:
+      "P($A$, $B$)"のように関数呼び出し記法の引数だけが個別に保護され
+      た断片が、識別子・括弧を含めた1つの$...$（"$P(A, B)$"）へen_text/
+      ja_text双方でまとまるか。
+    - test_merge_function_call_math_spans_merges_conditional_probability_pattern:
+      "P($A$ | $B$)"のような条件付き確率の"|"区切り表記を含む引数も
+      1つの$...$（"$P(A | B)$"）にまとまるか。
+    - test_merge_function_call_math_spans_merges_prime_notation_pattern:
+      "P($X$'|$Y$)"のようなプライム記号（更新後の値を表す表記）を含む
+      引数もまとまるか。直立アポストロフィ"'"とUnicodeの右シングル
+      クォーテーションマーク"'"（DeepLの実翻訳結果で使われることが
+      ある）の両方を確認する。
+    - test_merge_function_call_math_spans_skips_when_no_protected_span:
+      引数部に$...$を含まない未保護の関数呼び出し（"P(A, B)"）を書き
+      換えないか。
+    - test_merge_function_call_math_spans_skips_when_space_before_paren:
+      識別子と"("の間に空白がある場合（"BSDS500 ($K$=10)"のような固有
+      名詞＋丸括弧書き）を書き換えないか。
+    - test_merge_function_call_math_spans_skips_underscore_joined_identifiers:
+      "D_KL($p$, $q$)"のようなアンダースコア区切りの複合識別子が、
+      "KL"だけ切り出されて"D_"が地の文に取り残される破損が起きないか。
+    - test_merge_function_call_math_spans_skips_non_translatable_units:
+      翻訳対象外unitを書き換えないか。
+    - test_merge_function_call_math_spans_does_not_redetect_independently_on_en_text:
+      検出はja_textに対してのみ行われ、en_text単独に対して独立に正規
+      表現を再実行しないか（sample2.pdfの実データで見つかった、
+      無関係な後続の英文まで1つの$...$に巻き込む不具合の回帰テスト）。
+    - test_merge_function_call_math_spans_leaves_en_text_untouched_when_not_found_verbatim:
+      ja_textで検出された文字列（マージ"前"の形）がen_textに一字一句
+      一致しない場合、en_textには触れずja_textだけが書き換わるか。
+    - test_merge_comparison_math_spans_merges_matching_occurrences:
+      "$K$ > 1"のように既存の$...$スパンの直後に比較演算子と数値が
+      地の文として続く箇所が、1つの$...$（"$K > 1$"）にまとまるか。
+    - test_merge_comparison_math_spans_merges_various_operators:
+      ">"以外の比較演算子（"<"・">="・"<="・"=="等）でも同様にまとまるか。
+    - test_merge_comparison_math_spans_merges_when_right_side_is_math_span:
+      右辺が別の$...$スパン（"$K$ > $M$"）の場合も、中身だけ展開して
+      1つの$...$（"$K > M$"）にまとまるか。
+    - test_merge_comparison_math_spans_skips_when_right_side_is_word:
+      右辺が数値でも$...$スパンでもない自然文の単語（"$X$ > many
+      models"）は対象外とし、書き換えないか。
+    - test_merge_comparison_math_spans_skips_html_sup_tag:
+      "$X$</sup>"のようなHTML上付きタグを比較演算子の"<"と誤認しないか。
+    - test_merge_comparison_math_spans_skips_non_translatable_units:
+      翻訳対象外unitを書き換えないか。
+    - test_write_translated_pages_preserves_tag_format: 自作unitsから、
+      page_XX_en.mdと同じタグ形式でpage_XX_ja.mdが正しく書き出される
+      かを検証する。
+    - test_untranslated_fragment_candidates_against_cached_deepl_output:
+      cache/配下に凍結された実際のDeepL翻訳結果（units_raw.json）に
+      protect_confirmed_single_letter_leaks・merge_function_call_math_
+      spans・merge_comparison_math_spansを本番と同じ順序で適用してから、
+      find_
+      untranslated_fragment_candidatesで未保護の数式らしき候補を洗い
+      出し、KNOWN_FALSE_POSITIVE_FRAGMENTS（誤検知）／KNOWN_LEAKED_MATH_FRAGMENTS
+      （本物の未保護数式）という2つの許可リストに無い未知の候補が出た
+      ら失敗する回帰テスト。無課金でDeepLは一切呼ばない（凍結データの
+      生成元は「全体テスト」の実DeepL版、または人間による本実行）。
+      DeepLの翻訳結果は完全に決定的ではないため、凍結データが更新
+      されるたびに失敗することがあるが、これは想定内の挙動であり、
+      その都度人間が目視確認して許可リストへ追加する運用とする
+      （CLAUDE.mdのテスト運用規定4参照）。"取りあえず許可リストに
+      足してテストを通す"という運用は本テストの目的を損なうため避ける
+      こと。
+
+    現時点の許可リスト（sample0）は、"NMS"/"CFG"/"Classifier-Free
+    Guidance (CFG)"/"DiT"/"LoRA"/"FLUX"/"(ODE)"/"ODE"/"(i)"/"(ii)"/"(iii)"
+    という誤検知のみで、KNOWN_LEAKED_MATH_FRAGMENTS（本物の数式漏れ）
+    は空集合である。"x"/"y"/"z"/"K"/"γ"/"t = 1"/"t = 0"はいずれも
+    wrap_bare_greek_letters・wrap_bare_letter_equals_expressions・
+    protect_confirmed_single_letter_leaksにより自動保護されており、
+    この許可リストには含まれない（詳細は doc/architecture/stage6.md
+    「4. 構成要素リファレンス」の find_untranslated_fragment_candidates・
+    protect_confirmed_single_letter_leaks 参照）。sample1向けの許可
+    リストKNOWN_FALSE_POSITIVE_FRAGMENTS_SAMPLE1は、sample0と同種の
+    固有名詞・略語に加え、分野固有の評価指標・比較手法名、付録の章
+    番号を含む。KNOWN_LEAKED_MATH_FRAGMENTS_SAMPLE1も空集合である。
+    sample3（印刷ページラベル56＝MinerUバックエンドvlm-engine、および
+    印刷ページラベル55〜60＝MinerUバックエンドpipeline、の両方で共通）
+    向けの許可リストKNOWN_FALSE_POSITIVE_FRAGMENTS_SAMPLE3は、
+    "PGM"/"PGMS"（Probabilistic Graphical Modelの略語とその複数形）、
+    "SIR"（Sampling Importance Resampling）、"MCMC"（Markov Chain Monte
+    Carlo）、"KL"（Kullback-Leibler）、"ELBO"（Evidence Lower BOund）、
+    "DAG"（Directed Acyclic Graph）、"VAE"（Variational Autoencoder）、
+    "1c"（図のサブパネル参照、"Figure 1c"）、"AI"（Artificial
+    Intelligence）の10種類で、KNOWN_LEAKED_MATH_FRAGMENTS_SAMPLE3も
+    空集合である。
+
+    既知の限界（裸の数字1文字だけの数式漏れ）: "from t = 1 to 0 with K
+    discrete steps"の"0"のような、"$...$"で保護されず、かつ英字/
+    ギリシャ文字を伴わない裸の数字1つだけの数式漏れは、find_
+    untranslated_fragment_candidates自体が検出できない仕様（見出し
+    番号・節番号参照・引用番号等との誤検知を避けるための意図的な
+    トレードオフ）のため、本テストの許可リストチェックの対象にも
+    入らない。
+
+    既存の$...$スパンに比較演算子付きの断片が隣接するケース（例:
+    "$K$ > 1"）も、英字を含まない"> 1"部分がfind_untranslated_
+    fragment_candidatesの検出条件（英字/ギリシャ文字を1つ以上含む）に
+    合致せず、上記と同様に許可リストチェックの対象に入らない既知の
+    限界だった。このケースはmerge_comparison_math_spans（math_
+    protection.py）により、既存の$...$スパンとの隣接関係を手がかりに
+    ソース側で自動$...$保護されるようになったため、許可リストへの追加
+    ではなく自動保護への昇格という形で解消済みである。
+
+    既知の限界（MinerUバックエンドpipelineの数式検出精度）: sample2.pdf
+    （非公式に調査した参考データ）で、文頭の不定冠詞"A"/"a"のような、
+    数式ではない単体の英字をMinerUが数式変数と誤って$...$保護して
+    しまうケースが見つかった。「$...$で既に保護済み」という条件を
+    満たすため、本テストを含むいずれの検出・許可リストチェックの
+    対象にもならない、より根本的な限界である。詳細（原因・影響範囲・
+    sample2.pdfを保証対象外とした理由）はCLAUDE.md項目1を参照。
+
+    目視チェック実施状況: 実施済み（人間が確認）。CLAUDE.mdが定める
+    実DeepL許可4組み合わせ（sample0_full_pipeline_deepl/
+    sample1_full_pipeline_deepl/sample3_label55-60_pipeline_deepl/
+    sample3_label56-56_vlm-engine_deepl）全てを対象に完了している。
+
+    sample1.pdf（全体、MinerUバックエンドpipeline）の翻訳結果に
+    ついて、find_untranslated_fragment_candidatesの「英字/ギリシャ
+    文字を1つ以上含む」という検出条件による見落としも含めて洗い出す
+    ため、本文（body_sentence）・タイトル・見出し・図表キャプションの
+    翻訳対象全種別を対象に、$...$保護済み数式スパンを除いた半角文字
+    断片を機械的に抽出し、該当する全文（145文＋タイトル/見出し/
+    キャプション40件）を文脈込みで人間が目視確認した。誤検知（固有
+    名詞・略語・引用番号・列挙記号）以外の本物の数式漏れが1件見つかり
+    （P9-S23-C.2.impact-S1の"$K$ > 1"）、merge_comparison_math_spansの
+    追加により自動保護済みとなったことを、cache/配下の凍結データへの
+    再適用（DeepL再呼び出し無し）で確認した。sample0.pdfについては、
+    翻訳対象タグが100%sample1.pdfに含まれること、DeepLの非決定性による
+    言い回しの差異（共通タグの一部）が半角断片の抽出結果には一切影響
+    しないことをタグ単位で突き合わせて確認したため、別途の目視は
+    実施していない。
+
+    sample3.pdf（印刷ページラベル55〜60＝MinerUバックエンドpipeline、
+    および印刷ページラベル56のみ＝MinerUバックエンドvlm-engine）に
+    ついても、同じ方式（本文・見出しの半角断片抽出＋文脈込み目視。
+    この範囲にはタイトル・図表キャプションは存在しない）で確認した
+    （それぞれ37件・3件）。"PGM"/"PGMS"/"SIR"/"MCMC"/"KL"/"ELBO"/
+    "DAG"/"VAE"/"1c"/"AI"はいずれもKNOWN_FALSE_POSITIVE_FRAGMENTS_
+    SAMPLE3に含まれる既知の誤検知で、新規の本物の数式漏れは見つから
+    なかった。調査の過程で、sample3_label55-60_pipelineのP69-S10・
+    P69-S11（"P($X$’|$X$)"のような、関数呼び出し記法の引数だけが
+    個別に保護されたまま未マージの断片）を発見したが、これはコードの
+    不具合ではなく、対応する出力（`output/pytest_sample3_label55-60_
+    <タイムスタンプ>/`）がmerge_function_call_math_spansを含む数式
+    処理アルゴリズム改善（該当コミット）より前のタイムスタンプで
+    生成されていたために生じた、生成時点の差異によるものと判明した
+    （現行コードでこの断片にmerge_function_call_math_spansを直接
+    適用すると正しくマージされることを確認済み。同種のパターンが
+    page_68・page_71の他の箇所では既に正しくマージされていることから
+    局所的な事象と判断した）。
+
+    sample2.pdfは対応する許可リスト・実DeepLキャッシュが無いため正式な
+    目視チェックの対象外だが、参考として、人間による過去の本実行成果物
+    （`output/manual_sample2_full_<タイムスタンプ>/`。units_raw.json
+    スナップショットが無いため、既に翻訳後処理が適用済みの最終版
+    page_XX_en.md/page_XX_ja.mdに対して現行コードを再適用する形で検証）
+    を使って同様の調査を行った。この過程で、既存のmerge_function_call_
+    math_spans（修正前）がen_text側で無関係な後続の英文まで1つの$...$に
+    誤って巻き込む不具合を発見し、merge_function_call_math_spans・
+    merge_comparison_math_spansの検出方式をja_text側でのみ検出しen_text
+    へは文字列一致でのみ反映する設計に修正した（protect_confirmed_
+    single_letter_leaksと同じ方針。詳細はmainCode/stage6/stage6.pyの該当
+    docstring参照）。この修正はsample1・sample3（両範囲）の実データにも
+    再適用し、リグレッションが無いことを確認済み。
+
+    sample2.pdfではこの他に、MinerUバックエンド`pipeline`による数式
+    検出の誤り（文頭の不定冠詞"A"/"a"を数式変数と誤認する等）も見つかった
+    が、これは`sample2.pdf`固有の問題ではなく、`pipeline`バックエンド
+    自体の認識精度限界に起因すると考えられる（`vlm-engine`バックエンドは
+    より高精度）。現在の実DeepL許可4組み合わせのうち3件
+    （sample0_full_pipeline_deepl/sample1_full_pipeline_deepl/
+    sample3_label55-60_pipeline_deepl）も同じ`pipeline`バックエンドを
+    使用しているため、理論上は
+    同種の誤検出が起こりうる（これまでの目視確認で顕在化していないだけ
+    の可能性がある）。CLAUDE.mdの規定により、現行の計算機資源では
+    `sample2.pdf`を`vlm-engine`バックエンドで十分に実行できないため、
+    `sample2.pdf`は数式保護・翻訳品質の保証対象外としているが、これは
+    「sample2固有の問題だから」ではなく「pipelineバックエンドの精度
+    限界に起因する問題だから」という理解が正確である。
+
+  検証カテゴリ: ◆仕様完結型（自作データを使うテスト群）／
+    ◆機械的チェック・要人間検証
+    （test_untranslated_fragment_candidates_against_cached_deepl_output。
+    候補の内容自体はDeepLの非決定的な応答に依存するため、正確性では
+    なく許可リスト運用の十分性がリスクとなる。testCode/test_integration.py
+    に収録）
+
+  テスト対象（関数）:
+    - stage6.postprocess（工程(6)）
+    - stage6.find_untranslated_fragment_candidates（工程(6)）
+    - stage6.protect_confirmed_single_letter_leaks（工程(6)）
+    - stage6.write_translated_pages（工程(6)）
+
+
+======================================================================
+ 工程(7): PDF生成
+======================================================================
+
+  ファイル: testCode/test_stage7.py
+
+  該当関数: test_build_blocks_groups_consecutive_body_sentences_into_one_paragraph,
+    test_build_blocks_assigns_heading_level_from_section_number_depth,
+    test_build_blocks_skips_equation_image_and_keeps_equation_latex_block,
+    test_meta_block_html_escapes_author_affiliation_text,
+    test_non_meta_blocks_also_html_escape_their_text,
+    test_render_mono_html_uses_matching_document_title_for_each_language,
+    test_load_katex_assets_inlines_fonts_as_base64_data_uris,
+    test_render_all_pdfs_produces_three_nonempty_pdfs_with_japanese_text,
+    test_render_all_pdfs_on_real_translated_sample（sample0〜3の4ケース）
+
+  何を調べているか:
+    - test_build_blocks_groups_consecutive_body_sentences_into_one_paragraph:
+      連続する本文文が1つの段落ブロックにまとまるか。
+    - test_build_blocks_assigns_heading_level_from_section_number_depth:
+      見出しレベルが章番号の深さ（"1."→レベル2、"2.1"→レベル3）から
+      正しく決まるか。
+    - test_build_blocks_skips_equation_image_and_keeps_equation_latex_block:
+      equation_imageは対応するequation_latexブロックがKaTeXで描画する
+      ため、build_blocksの時点で出力から除かれるか。
+    - test_meta_block_html_escapes_author_affiliation_text /
+      test_non_meta_blocks_also_html_escape_their_text: 著者・所属を含む
+      metaブロックも、残り4種別（title/heading/paragraph/equation）も、
+      "<"/">"/"&"を含むテキスト（MinerUのOCR誤認等）が_esc()で
+      HTMLエスケープされ、タグとして解釈されないか（mutation testing由来）。
+    - test_render_mono_html_uses_matching_document_title_for_each_language:
+      render_mono_htmlが組み立てる単一言語版HTMLの<title>タグ（PDFビューア
+      のタブ表示名）が、渡したlangに応じて英語版="英語版"・日本語版=
+      "日本語版"と対応しているか（mutation testing由来。render_all_pdfs
+      経由の間接テストでは触れられていなかった）。
+    - test_load_katex_assets_inlines_fonts_as_base64_data_uris:
+      load_katex_assetsが、vendor/katex/のCSS内の@font-face参照
+      （url(fonts/*.woff2)）を全てbase64のdata URIへ置換し、フォントの
+      パス参照を1つも残さないか（CDN非依存でオフライン完結させるため）。
+    - test_render_all_pdfs_produces_three_nonempty_pdfs_with_japanese_text:
+      自作ブロックから、対訳版／英語版／日本語版の3種PDFが空でなく
+      生成され、日本語版に実際の日本語文字が含まれるか。
+    - test_render_all_pdfs_on_real_translated_sample: cache/配下に凍結
+      された、実際にDeepLで翻訳済みのDocUnitをbuild_blocks/
+      render_all_pdfsに通す実データ・スモークテスト。図表画像自体は
+      cache/配下に永続化されていないため、figure_image種別のunitは
+      対象から除外し、テキスト系要素のレンダリングのみを対象にする。
+
+  検証カテゴリ: ◆仕様完結型（build_blocksの自作データテスト群、
+    render_all_pdfsの自作ブロックテスト、HTMLエスケープ・単一言語版
+    タイトル・load_katex_assetsの各テスト）／◆実データ・要人間検証
+    （test_render_all_pdfs_on_real_translated_sampleのうち、実DeepL
+    記録が有るケース。記録の有無はcache/配下の状態に依存する）／
+    ◆要人間確認（PDFに実際に描画されたKaTeX数式の見た目。
+    対応する自動テストは存在しない）
+
+  数式(KaTeX)描画についての注記: build_blocks/render_all_pdfsの自動
+  テストは、あくまでMarkdown段階でのLaTeX文字列表現（`\tag{n}`付き
+  LaTeXや`$...$`ラップ）と、3種PDFが空でなく生成されることまでしか
+  検証しておらず、Playwright(Chromium)経由でPDF化された後の見た目
+  （KaTeXの実際のレンダリング結果）を検証する自動テストは存在しない。
+  翻訳前後で数式を保護・復元するshared.protect/restoreは、
+  工程(3)のtest_math_protection_round_trips_all_real_inline_mathで、
+  sample0.pdf実データに含まれる数式スパン全数（27個）を対象にした
+  直接ユニットテストがあり、翻訳前後で数式が壊れず復元されること
+  （\textless/\textgreaterの正規化を含む）は自動テストで継続的に
+  検知できる。ただし「KaTeXが実際にPDF上で正しく描画されるか」という
+  見た目の検証は自動化されていない。
+
+  目視チェック実施状況: 実施済み（人間が確認）。sample0.pdfの生成
+    PDFを人間が実際に開いて目視確認した。
+    - "$x$"/"$y$"/"$z$"/"$K$"（単体アルファベット自動保護）が、既存の
+      MinerU由来の数式（"$p ( y \mid x )$"等）と同じ数式イタリック体で、
+      地の文と明確に区別できる見た目で正しく描画されていることを確認
+      した。
+    - "$\gamma$"（ギリシャ文字、TeXコマンド形式。"scale γ"）が、同様に
+      正しい数式書体で崩れず描画されていることを確認した。
+    - 分数・添字・太字ベクトル等を含む複雑な既存数式も含め、描画崩れ・
+      文字化けは見当たらなかった。
+    - "t = 1 to t = 0"（自動保護対象外の既知の限界）は、拡大して確認
+      したところ周囲の地の文と同じ通常のフォントであり、無保護のまま
+      地の文として表示されている（想定通りの挙動）ことを確認した。
+    なお、確認したのはsample0.pdf（2ページ）のみであり、他のサンプル
+    （sample1〜3.pdf）や、より複雑な数式パターンでの描画は未確認の
+    ままである。
+
+  テスト対象（関数）:
+    - stage7.build_blocks / render_all_pdfs（工程(7)）
+    - stage7.render_mono_html（単一言語版HTMLの組み立て。
+      test_render_mono_html_uses_matching_document_title_for_each_language
+      で<title>タグのlang対応を直接検証）
+    - stage7._esc（全ブロック種別のHTMLエスケープ。
+      test_meta_block_html_escapes_author_affiliation_text・
+      test_non_meta_blocks_also_html_escape_their_textで直接検証）
+    - stage7._wrap_html（KaTeXのCSS・JSを埋め込んだページ全体
+      HTMLの組み立て。間接テストすら無い）
+    - stage7.load_katex_assets / _inline_css / _inline_block
+      （KaTeXアセットの読み込み・フォントのdata URI化。
+      test_load_katex_assets_inlines_fonts_as_base64_data_urisが
+      load_katex_assetsを直接検証。_inline_css/_inline_blockはその
+      経由の間接検証）
+    - stage3.normalize（薄いラッパー関数。直接のユニット
+      テストは無く、prepare_translation_input経由の間接実行のみ）
+
+
+======================================================================
+ 統合テスト（工程横断）
+======================================================================
+
+  ファイル: testCode/test_integration.py（test_untranslated_fragment_
+    candidates_against_cached_deepl_output を含む。詳細は本ファイルの
+    後続セクションを参照）
+
+  該当関数: test_translate_and_export_with_mocked_translation（sample0〜3の
+    4ケース）,
+    test_translate_and_export_translates_all_translatable_units
+
+  何を調べているか:
+    いずれも `translate_paper.translate_units` をmonkeypatchでダミー関数
+    （すべての翻訳対象文に固定文字列を返す）に差し替えて
+    `prepare_translation_input`・`translate_units`・`apply_restore`・
+    `stage6.postprocess`・`render_units_to_pdfs`（工程(3)〜(7)をまとめて
+    実行する、main()と同じ関数の並び）を実行する、工程横断の統合テスト。
+    - test_translate_and_export_with_mocked_translation: 実際にMinerUで解析
+      済みの本文・図・数式データ（sample0〜3。sample3のみ印刷ページ
+      ラベル55〜60の範囲に限定）に対して、
+      1. 出力ファイルが3つ、正しく（存在し・空でなく）生成されている
+         か（対訳版／英語版／日本語版）
+      2. paper_ja.pdfに、モック訳文由来の日本語が含まれているか
+      3. page_XX_ja.mdが実際に生成され、翻訳対象文が存在するページには
+         モック訳文字列が反映されているか
+      を確認する。「日本語が1文字でもあればPASS」という検証は薄く、
+      翻訳対象50文中49文が未翻訳でも検知できないという弱点があり、
+      それを補うために次のテストがある。
+    - test_translate_and_export_translates_all_translatable_units:
+      翻訳対象文の数が既知（5文: title 1 + heading 1 + body_sentence
+      3）の自作Markdownを用意し、モック訳文字列が出力PDFに**ちょうど
+      5回**出現することを確認する。process_pdf/MinerUを一切経由しない
+      ため数秒で完了する。
+
+  検証カテゴリ: ◆機械的チェック・要人間検証（十分性のリスク）
+    実データの内容そのものを信用する形の期待値は持たない。ただし
+    test_translate_and_export_with_mocked_translationは「1文字でもあれば
+    PASS」という検証範囲の薄さゆえに、それ単体では十分な保証には
+    ならない、という十分性のリスクを抱えている。翻訳網羅性を検証する
+    2件目のテストがこのリスクを部分的に軽減するが、「対訳版レイアウト」
+    「見出し・段落の構造」「数式(KaTeX)描画」等は、下記の目視チェック
+    で別途確認するまで、自動テストの範囲外であることに変わりはない。
+
+  目視チェック実施状況: 実施済み。「対訳版レイアウト」「見出し・
+    段落の構造」はsample0.pdfの本番実行結果を人間が直接開いて目視確認
+    し、問題無しと確認済み。「参考文献セクションの翻訳除外」は
+    sample1.pdf（論文フルサイズ、9ページ）の本番実行結果で、
+    page_06_en.mdとpage_06_ja.mdが完全に一致する（＝参考文献セクション
+    が翻訳されず原文のまま出力される）ことをテキストレベルで確認した
+    上で、対訳版PDFを人間が直接開いて目視確認し、問題無しと確認済み。
+    「数式(KaTeX)描画」も、このsample1.pdf対訳版PDFの目視確認に含めて
+    確認済みである（工程(7)の目視チェックも参照。sample0.pdfは別途
+    確認済み）。
+
+  テスト対象（関数）:
+    - stage3.prepare_translation_input（工程(3)。工程(3)〜工程(7)の
+      うち工程(3)を代表する入口）
+    - stage4.translate_units（工程(4)）／
+      stage5.apply_restore（工程(5)）／stage6.postprocess（工程(6)）
+    - stage3.parse_output_dir / build_document_context /
+      exclude_references_section（工程(3)）
+    - stage4.call_deepl（工程(4)。ただし
+      translate_units自体がmonkeypatchでダミー関数に差し替えられている
+      ため、DeepLとの通信そのものではなく「翻訳結果(ja_text)が後続の
+      PDF生成に正しく反映されるか」という接続部分のみが検証対象になる）
+    - stage7.build_blocks / render_all_pdfs（工程(7)。3種PDFが
+      実際に生成されることの検証を通じて間接的にテストされる）
+
+
+======================================================================
+ 全体テスト（工程(1)〜(7)を1本のテストで通しで検証する）
+======================================================================
+
+  ファイル: testCode/test_whole_pipeline.py
+
+  該当関数: test_run_pipeline_end_to_end_with_mocked_translation
+    （sample0_full_pipeline/sample1_full_pipeline/sample2_full_pipeline/
+    sample3_label55-60_pipeline/sample3_label56-56_vlm-engine
+    の5ケース）,
+    test_run_pipeline_end_to_end_with_real_deepl
+    （sample0_full_pipeline_deepl/sample1_full_pipeline_deepl/
+    sample3_label55-60_pipeline_deepl/sample3_label56-56_vlm-engine_deepl
+    の4ケース）
+
+  何を調べているか:
+    resolve_page_range（工程(1)）→process_pdf（工程(2)）→
+    prepare_translation_input・translate_units・apply_restore・
+    stage6.postprocess・render_units_to_pdfs（工程(3)〜(7)）という、
+    main()が実際に呼ぶのと同じ関数の並びをそのまま実行する、唯一の
+    CLIレベルのエンドツーエンドテスト。
+    - test_run_pipeline_end_to_end_with_mocked_translation: 翻訳エンジンを
+      モックし、sample3のみ`--start-label 55 --end-label 60`相当
+      （resolve_page_range経由）を指定し、ラベル解決の結果が実際に
+      MinerU実行・翻訳・PDF生成まで正しくつながることを検証する。
+      sample3_label56-56_vlm-engineケースは、同じsample3.pdfの印刷
+      ページラベル56のみ（物理68）を対象に、MinerUバックエンドへ
+      `vlm-engine`を指定した場合でもパイプライン全体が問題なく通ることを
+      検証する。翻訳エンジン（translate_units）をモックしているため
+      無課金で、出力はpytestの一時ディレクトリに書き、テスト終了後に
+      自動的に消える。
+    - test_run_pipeline_end_to_end_with_real_deepl: DeepLも含めて一切
+      モックせず実際に通しで検証する（CLAUDE.mdの例外規定により4ケース
+      限定。sample0_full_pipeline_deepl/sample1_full_pipeline_deepl/
+      sample3_label55-60_pipeline_deeplはMinerUバックエンド`pipeline`、
+      sample3_label56-56_vlm-engine_deeplのみ`vlm-engine`）。
+      実行するたびに実際に課金が発生するため、人間の事前確認を得てから
+      実行すること。出力はoutput/配下の
+      `pytest_{run_id}_{range_label}_{タイムスタンプ}_deepl`フォルダに
+      永続化され、同じ組み合わせで再実行しても過去の結果を上書きしない。
+      さらに、main()自身が_resolve_snapshot_dirで保存先のパスを決めた
+      上で、工程(3)直後に_write_structured_snapshot・工程(4)直後に
+      _write_translation_snapshotという専用の記録保存関数をそれぞれ
+      直接呼ぶことで、DeepLからの実際の応答がcache/配下（mineru_cacheと
+      同じ親ディレクトリ、real_deepl_output_<タイムスタンプ>/）へ
+      自動的に記録される（人間による本実行でも同様に動作する）。
+
+  検証カテゴリ: ◆機械的チェック・要人間検証
+    （test_run_pipeline_end_to_end_with_mocked_translation。統合テストと
+    同じ理由で、日本語が含まれるかという検証範囲の薄さがリスク）／
+    ◆外部API依存・非決定的（test_run_pipeline_end_to_end_with_real_deepl）
+
+  テスト対象（関数）:
+    - stage1.resolve_page_range（工程(1)）
+    - stage2.process_pdf（工程(2)）
+    - stage3.prepare_translation_input（工程(3)）
+    - stage4.translate_units（工程(4)）
+    - stage5.apply_restore（工程(5)）
+    - stage6.postprocess（工程(6)）
+    - stage7.render_units_to_pdfs（工程(7)）
+
+
+■ まとめ表（セクション → テスト数 → 検証カテゴリ → 工程 → 目視確認状況 →
+  主なテスト対象関数）
+
+  凡例: 仕=◆仕様完結型（検証不要） / 実=◆実データ・要人間検証（正確性）
+        / 機=◆機械的チェック・要人間検証（十分性）
+        / 人=◆要人間確認（対応する自動テストが無い）
+        / 外=外部API依存・非決定的
+  「目視確認状況」は、各セクション説明の「目視チェック実施状況」欄の
+  要約（実施済み／一部実施済み／未実施／対象項目なし）。「対象サンプル」
+  は、そのセクションの実データ確認テストが対象とするsample0〜3.pdfと
+  範囲（範囲指定が無いものは全体）。
+
+  共有モジュール（mainCode/shared/shared.py）
+    検証カテゴリ: 仕　対応する工程: 無し（特定の工程に紐づかない契約）
+      目視確認状況: 対象項目なし
+    対象サンプル: 無し（自作の短い文字列のみ）
+    主なテスト対象関数: protect, restore
+
+  工程(1) ページ範囲の決定
+    検証カテゴリ: 仕/実　対応する工程: (1)　目視確認状況: 実施済み
+    対象サンプル: sample3.pdf（章範囲確認: 章1→物理17-49、章1,2→物理
+      17-88。印刷ページラベル確認: 物理1・2・16・67・72＝ラベル"cov"/
+      "i"/"xviii"/"55"/"60"）
+    主なテスト対象関数: resolve_page_range, resolve_chapter_page_range,
+      resolve_physical_page(_range), describe_page_range,
+      default_output_dir, _require_pdf_exists
+
+  工程(2) PDF解析（MinerU実行）
+    検証カテゴリ: 仕/実　対応する工程: (2)　目視確認状況: 対象項目なし
+    対象サンプル: sample0.pdf・sample1.pdf・sample2.pdf（全体）、
+      sample3.pdf（印刷ページラベル55〜60＝物理67〜72）
+    主なテスト対象関数: run_mineru, mineru_cache
+
+  工程(3) 構造化・タグ処理
+    検証カテゴリ: 仕/実　対応する工程: (2)(3)　目視確認状況: 実施済み
+    対象サンプル: sample0.pdf（全体）、sample1.pdf（全体、表4件）、
+      sample2.pdf（全体、表2件）、sample3.pdf（印刷ページラベル55〜60＝
+      物理67〜72）
+    主なテスト対象関数: analyze_structure, stage2のテキストユーティリティ群,
+      build_document, stage3群
+
+  工程(4) 翻訳実行
+    検証カテゴリ: 仕　対応する工程: (4)　目視確認状況: 対象項目なし
+    対象サンプル: 無し（自作DocUnitによるモック検証のみ。DeepLへ
+      通信しない）
+    主なテスト対象関数: call_deepl, _build_context_text, translate_units
+
+  工程(5) 翻訳後処理（数式復元）
+    検証カテゴリ: 仕/実　対応する工程: (5)　目視確認状況: 対象項目なし
+    対象サンプル: test_apply_restore_matches_cached_deepl_outputは
+      sample0.pdf〜sample3.pdf（全体。sample3.pdfは印刷ページラベル
+      55〜60＝物理67〜72）を対象にparametrize化されているが、cache/配下
+      に実DeepL結果の記録が無いサンプル・範囲は実行時にskipされる。
+    主なテスト対象関数: apply_restore, _write_restore_snapshot
+
+  工程(6) 数式保護
+    検証カテゴリ: 仕/機　対応する工程: (6)　目視確認状況: 実施済み
+    （実DeepL許可4組み合わせ全て。詳細は本文書「未保護インライン数式の
+    許可リスト運用」節末尾を参照）
+    対象サンプル: test_untranslated_fragment_candidates_against_cached_deepl_output
+      （許可リスト突合。testCode/test_integration.pyに収録）はCLAUDE.mdの
+      例外規定によりsample0.pdf・sample1.pdf限定で、対応する許可リスト
+      （KNOWN_FALSE_POSITIVE_FRAGMENTS等）もこの2つにしか存在しない
+      ため、sample2.pdf/sample3.pdfはparametrizeの対象にすら含まれて
+      いない。test_stage6.py自体は自作データによる仕様完結型テストのみ。
+    主なテスト対象関数: postprocess, protect_confirmed_single_letter_leaks,
+      merge_function_call/comparison_math_spans,
+      find_untranslated_fragment_candidates, write_translated_pages
+
+  工程(7) PDF生成
+    検証カテゴリ: 仕/実/人　対応する工程: (7)　目視確認状況: 一部実施済み
+      （sample0.pdfのみ）
+    対象サンプル: test_render_all_pdfs_on_real_translated_sampleは
+      sample0.pdf〜sample3.pdf（全体。sample3.pdfは印刷ページラベル
+      55〜60＝物理67〜72）を対象にparametrize化されているが、cache/配下
+      に実DeepL結果の記録が無いサンプル・範囲は実行時にskipされる
+      （記録の有無はcache/配下の状態に依存する）。
+    主なテスト対象関数: build_blocks, render_all_pdfs, _wrap_html,
+      load_katex_assets
+
+  統合テスト
+    検証カテゴリ: 機/人　対応する工程: (3)(4)(5)(6)(7)
+      目視確認状況: 実施済み（sample0.pdf・sample1.pdfのみ。sample2.pdf/
+      sample3.pdfは自動テストの対象ではあるが目視確認の対象ではない）
+    対象サンプル（自動テスト）: sample0.pdf・sample1.pdf・sample2.pdf
+      （全体）、sample3.pdf（印刷ページラベル55〜60＝物理67〜72）
+    主なテスト対象関数: prepare_translation_input, translate_units, apply_restore, postprocess, render_units_to_pdfs
+
+  全体テスト
+    検証カテゴリ: 機/外　対応する工程: (1)〜(7)
+      目視確認状況: 工程(7)・統合テストの目視確認を参照
+    対象サンプル: モック版はsample0.pdf〜sample3.pdf（統合テストと同じ
+      範囲。sample3.pdfのみ印刷ページラベル55〜60・56＋vlm-engineの
+      2ケース）、実DeepL版はCLAUDE.mdが定める許可された4組み合わせ
+      （sample0全体・sample1全体・sample3印刷ページラベル55〜60・
+      sample3印刷ページラベル56＋vlm-engineバックエンド。sample2.pdfは
+      対象外）
+    主なテスト対象関数: resolve_page_range, process_pdf, prepare_translation_input, translate_units, apply_restore, postprocess, render_units_to_pdfs
+  ------------------------------------------------------------------
+
+  実データ依存度: 上表でsample0〜sample3.pdfの実際の中身（MinerUの
+  OCR結果、または実際の目次・印刷ページラベルの構成）に依存している
+  のは一部にとどまり、残りはPDFを使わない純粋なロジックテストか、
+  fitzでテスト実行時に組み立てる合成PDF（目次・印刷ページラベルのみを
+  持つ白紙PDF）によるアルゴリズム検証である。工程(1)のうち章範囲計算・
+  印刷ページラベル解決というアルゴリズム自体は特定の論文・書籍の内容に
+  依存しないはずという理由から合成PDFベースにしており、実データでの
+  統合確認は各アルゴリズムにつき最低1件に絞っている（詳細は工程(1)の
+  説明を参照）。
+
+  「実」に分類されるテスト群は、期待値の妥当性がMinerUのOCR結果や
+  TOC/ラベルからの計算・参照結果を信用する形で成立しており、独立した
+  人間検証の記録が無い（印刷ページラベル解決は直接参照でロジックが
+  単純なためリスクは相対的に低い）。これらは「壊れていないことの
+  検知」には有効だが、「そもそも正しいことの保証」にはならない点に
+  注意が必要である。
+
+  「機」に分類される統合テスト・全体テスト（モック版）は、実データの
+  解釈結果を信用するリスクは無いが、代わりに「チェックの粒度が本当に
+  十分か」という別種の検証が必要である。翻訳網羅性を検証するテストで
+  十分性を部分的に改善したが、対訳版レイアウトそのものの検証は自動
+  テストの範囲外であり（目視確認済み。統合テストの項参照）、今後さらに
+  テストケースを追加する余地が残っている。
+
+  数式(KaTeX)描画については十分性の問題としてではなく、対応する自動
+  テストが存在しないこと自体を工程(7)の「人」カテゴリとして扱っている。
+  そもそも判定できるtest_関数が無いため、テストがPASSし続けているか
+  どうかで安心度を測ることができず、数式を含むPDFを生成するたびに
+  人間が目視で確認する運用が必要である。
+
+  「外」に分類される全体テスト（実DeepL版）は、数式(KaTeX)描画とは
+  別種のリスク（MinerUの数式検出漏れが、保護されないままDeepLに渡って
+  壊れる可能性）を、唯一DeepLを実課金でモック化せずに検証するテスト
+  である。他のテストが「実データの解釈を信用しているか」「チェックの
+  粒度が十分か」であるのに対し、これは「外部サービスの応答が実行の
+  たびに変わりうる」という非決定性そのものがリスクであり、PASSし
+  続けてもコード側の保証にはならず、逆に一時的なDeepL側の言い換えで
+  FAILすることもあり得る。実行のたびに実際のDeepL課金が発生する点も
+  他のテストとは異なる。
+
+  実際にDeepLを呼んで凍結データを生成すること（全体テストの実DeepL版）
+  と、その結果に対して許可リスト突合を行うこと（工程(6)の
+  test_untranslated_fragment_candidates_against_cached_deepl_output）
+  は別のテストに分かれている。後者は前者の凍結データさえあれば無課金・
+  毎回実行できるため、日常の開発ループで気軽に実行してよい（対応する
+  記録が無い場合はスキップされる）。これは、DeepLの言い回しが変わると
+  テストが（コード側のバグが無くても）失敗しうるという非決定性リスクを、
+  許可リストの運用（人間による随時追加）で吸収する設計である。
+
+  加えて、検出（許可リストでの容認）から一歩進んで実際に保護まで行う
+  3つの自動保護関数（stage2.wrap_bare_greek_letters・
+  wrap_bare_letter_equals_expressions・stage6.protect_
+  confirmed_single_letter_leaks）があり、本物の数式漏れの候補は全て
+  自動保護されているため、KNOWN_LEAKED_MATH_FRAGMENTSは空集合である。
+  なおstage6.merge_function_call_math_spans・
+  merge_comparison_math_spansは、これら3関数とは異なり新規の保護は
+  行わず、既にこの3関数（等）で保護済みのスパンが、それぞれ関数呼び
+  出し記法の引数（例:"P($A$, $B$)"）・比較演算子付きの断片
+  （例:"$K$ > 1"）として現れる場合に、識別子・括弧や演算子・値ごと
+  1つの$...$へ統合し直すだけの後処理である（詳細は
+  doc/architecture/stage6.md「4. 構成要素リファレンス」の
+  merge_function_call_math_spans・merge_comparison_math_spans 参照）。
+  protect_confirmed_single_letter_leaksは、既存の$...$保護済みスパン
+  の内部を誤って二重に囲むと数式が破損するため、protect/restoreで
+  既存スパンを一時退避してから置換する実装になっている（詳細は
+  doc/architecture/stage6.md「4. 構成要素リファレンス」の
+  protect_confirmed_single_letter_leaks 参照）。ギリシャ文字の保護はTeXコマンド形式
+  （例:"γ"→"$\gamma$"）に変換して行う（KaTeX本体が生の文字を\gamma
+  のエイリアスとして扱うことはvendor/katex/katex.min.jsの内部定義から
+  確認済みで、動作上は生の文字でもコマンド形式でも等価だが、他の数式
+  スパンとの表記の一貫性のためコマンド形式を採用している）。裸の数字
+  1文字だけの数式漏れは依然として自動検出の対象外という既知の限界が
+  残っており、許可リスト突合の「フルチェック」はあくまでfind_
+  untranslated_fragment_candidatesが検出可能な範囲に限られる。
